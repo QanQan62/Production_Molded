@@ -24,7 +24,6 @@ export function autoSuggest(
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // Khởi tạo tải trọng cho từng chuyền (đơn vị: giờ)
   const lineLoads: Record<string, number> = {};
   lines.forEach(l => { lineLoads[l.id] = 0; });
 
@@ -33,57 +32,76 @@ export function autoSuggest(
     const brand = (firstItem.brand || "").toUpperCase();
     const mold = (group.moldType || "").toUpperCase();
     const article = (firstItem.articleCode || "").toUpperCase();
+    const productType = (firstItem.productType || "").toUpperCase();
+    const thangHoa = (firstItem.thangHoa || "").trim() !== "" ? "CÓ" : "KHÔNG";
+    const totalQty = group.totalQuantity;
     const target = moldTargets.find(t => t.moldType === group.moldType)?.targetPerHour || 0;
 
-    // Chỉ urgent nếu có trong bảng priority (isPriority)
     const isUrgent = group.items.some((i: any) => i.isPriority);
 
-    // 1. Xác định tập các chuyền ứng viên theo Rule (Brand/Mold/Article)
+    // 1. Xác định tập các chuyền ứng viên theo Rule
     let candidates: Line[] = [];
 
-    // Tìm các lines có rule khớp với group này
     const matchedRules = lineRules.filter(r => {
-       const val = (r.ruleValue || "").toUpperCase();
+       const val = (r.ruleValue || "").toUpperCase().trim();
        if (r.ruleType === 'BRAND') return brand.includes(val);
        if (r.ruleType === 'MOLD') return mold.includes(val);
        if (r.ruleType === 'ARTICLE') return article.includes(val);
+       if (r.ruleType === 'PRODUCT_TYPE') return productType === val;
+       if (r.ruleType === 'THANG_HOA') return thangHoa === val;
+       if (r.ruleType === 'TOTAL_QTY_GT') return totalQty > Number(val);
+       if (r.ruleType === 'TOTAL_QTY_LT') return totalQty < Number(val);
+       if (r.ruleType === 'TOTAL_QTY_RANGE') {
+           const parts = val.split('-');
+           if (parts.length === 2) {
+               const min = Number(parts[0]);
+               const max = Number(parts[1]);
+               return totalQty >= min && totalQty <= max;
+           }
+       }
        return false;
+    });
+
+    // Đặc biệt: M5 chỉ cho 1k3s nếu lineRules có rule cho M5 là 1k3s
+    const m5RuleIsStrict = lineRules.some(r => {
+        const line = lines.find(l => l.id === r.lineId);
+        return line?.lineCode === 'M5' && r.ruleType === 'PRODUCT_TYPE' && r.ruleValue.toUpperCase() === '1K3S';
     });
 
     if (matchedRules.length > 0) {
         candidates = lines.filter(l => matchedRules.some(r => r.lineId === l.id));
-        
-        // Overflow: Chỉ được tràn sang M1-M5
-        if (isUrgent && candidates.every(c => lineLoads[c.id] > 12)) {
-             candidates.push(...lines.filter(l => ['M1', 'M2', 'M3', 'M4', 'M5'].includes(l.lineCode) && lineLoads[l.id] < 5));
-        }
     } else {
-        // Hàng không có rule cụ thể: Ưu tiên M5 (theo thói quen xưởng)
-        candidates = lines.filter(l => l.lineCode === 'M5');
-        // Nếu M5 đầy, cho phép nhảy sang M1-M4
-        if (isUrgent && (candidates.length === 0 || candidates.every(c => lineLoads[c.id] > 10))) {
-             candidates = lines.filter(l => ['M1', 'M2', 'M3', 'M4', 'M5'].includes(l.lineCode));
+        // Hàng không có rule cụ thể: Ưu tiên M1-M4
+        candidates = lines.filter(l => !['H1', 'H2', 'M5'].includes(l.lineCode));
+        
+        // Nếu các chuyền chính quá tải, mới tràn sang M5 CHỈ KHI M5 KHÔNG CĂNG RULE 1K3S
+        if (candidates.length === 0 || candidates.every(c => lineLoads[c.id] > 12)) {
+             if (!m5RuleIsStrict || productType === '1K3S') {
+                 candidates.push(...lines.filter(l => l.lineCode === 'M5'));
+             }
         }
     }
 
-    // Luôn giữ rule đặc biệt cho H2: H2 chỉ chạy OE-0656 và OE-1429 nếu không có rule cụ thể
+    // Ưu tiên Thăng hoa vào H1 nếu không có rule cụ thể
+    if (thangHoa === 'CÓ' && candidates.every(c => c.lineCode !== 'H1')) {
+        const h1 = lines.find(l => l.lineCode === 'H1');
+        if (h1) candidates.unshift(h1);
+    }
+
+    // H2 Logic remains strict (KEEP)
     if (mold === 'OE-0656' || mold === 'OE-1429') {
        candidates = lines.filter(l => l.lineCode === 'H2');
     } else {
-       // Ngược lại, KHÔNG cho phép hàng khác vào H2 trừ khi có rule gán trực tiếp đã chạy ở trên
        candidates = candidates.filter(l => l.lineCode !== 'H2');
     }
 
-    // 2. Chọn chuyền rảnh nhất trong tập ứng viên
     let selectedLine = candidates.sort((a, b) => lineLoads[a.id] - lineLoads[b.id])[0];
     
     if (!selectedLine) {
-       // Fallback: Tuyệt đối không vào H2, H1 nếu không có chỉ định
        selectedLine = lines.filter(l => !['H1', 'H2'].includes(l.lineCode))
                            .sort((a, b) => lineLoads[a.id] - lineLoads[b.id])[0];
     }
     
-    // Nếu vẫn không có (ví dụ tất cả lines là H1/H2), lấy đại cái đầu tiên
     if (!selectedLine) selectedLine = lines[0];
 
     if (selectedLine && target > 0) {

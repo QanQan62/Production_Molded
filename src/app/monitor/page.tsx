@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
-import { lines, productionJobs, orders, systemConfig } from "@/db/schema";
-import { eq, desc, or } from "drizzle-orm";
+import { lines, productionJobs, orders, systemConfig, priorityOrders as priorityOrdersSchema, moldTargets } from "@/db/schema";
+import { eq, desc, or, sql } from "drizzle-orm";
 import MonitorClient from "./MonitorClient";
 import { syncAllData } from "@/app/api/sync/route";
 
@@ -24,7 +24,6 @@ export default async function MonitorPage() {
 
   const allLinesRaw = await db.select().from(lines).where(eq(lines.isActive, true));
   const allowedLines = ['M1', 'M2', 'M3', 'M4', 'M5', 'H1', 'H2'];
-  // Keep only unique line codes, prefer existing uppercase or the first one found
   const uniqueLinesMap = new Map();
   allLinesRaw.forEach(l => {
     const code = l.lineCode.toUpperCase();
@@ -34,8 +33,8 @@ export default async function MonitorPage() {
   });
   const allLines = Array.from(uniqueLinesMap.values()).sort((a, b) => a.lineCode.localeCompare(b.lineCode));
 
-  const priorityOrders = await db.select().from(require('@/db/schema').priorityOrders);
-  const targets = await db.select().from(require('@/db/schema').moldTargets);
+  const priorityOrders = await db.select().from(priorityOrdersSchema);
+  const targets = await db.select().from(moldTargets);
 
   const activeOrdersAtLeanline = await db
     .select({
@@ -49,6 +48,12 @@ export default async function MonitorPage() {
       moldType: orders.moldType,
       leanlineInDate: orders.leanlineInDate,
       cuttingDie: orders.cuttingDie,
+      brand: orders.brand,
+      logoStatus: orders.logoStatus,
+      codeLogo1: orders.codeLogo1,
+      descriptionPU1: orders.descriptionPU1,
+      descriptionFB: orders.descriptionFB,
+      productType: orders.productType,
       jobId: productionJobs.id,
       jobStatus: productionJobs.status,
       createdAt: productionJobs.createdAt,
@@ -93,11 +98,21 @@ export default async function MonitorPage() {
             finishDate: priority?.newFinishDate || orderData.finishDate,
             leanlineInDate: orderData.leanlineInDate,
             cuttingDie: orderData.cuttingDie,
+            brand: orderData.brand,
+            logoStatus: orderData.logoStatus,
+            descriptionPU1: orderData.descriptionPU1,
+            productType: orderData.productType,
+            descriptionFB: orderData.descriptionFB,
+            codeLogo1: orderData.codeLogo1,
             targetPerHour: target ? target.targetPerHour : 0,
-            isPriority: !!priority
+            isPriority: !!priority || ((priority as any)?.newFinishDate === new Date().toISOString().split('T')[0])
           },
         };
-      }).sort((a: any, b: any) => (a.order.bom || "").localeCompare(b.order.bom || "")),
+      }).sort((a: any, b: any) => {
+          if (a.order.isPriority && !b.order.isPriority) return -1;
+          if (!a.order.isPriority && b.order.isPriority) return 1;
+          return (a.order.bom || "").localeCompare(b.order.bom || "");
+      }),
     };
   });
 

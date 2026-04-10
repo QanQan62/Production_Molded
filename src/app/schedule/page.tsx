@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { orders, lines, productionJobs, lineConfigs, moldTargets, lineRules as lineRulesSchema, priorityOrders as priorityOrdersSchema, systemConfig } from "@/db/schema";
+import { orders, lines, productionJobs, lineConfigs, moldTargets, lineRules as lineRulesSchema, priorityOrders as priorityOrdersSchema, systemConfig, manualCombines } from "@/db/schema";
 import { eq, and, sql, asc, inArray, desc } from "drizzle-orm";
 import { groupBOMs } from "@/lib/productionLogic";
 import { autoSuggest } from "@/lib/autoRouter";
@@ -39,6 +39,7 @@ export default async function SchedulePage() {
   const targets = await db.select().from(moldTargets);
   const rules = await db.select().from(lineRulesSchema);
   const priorityOrders = await db.select().from(priorityOrdersSchema);
+  const manualCombinesData = await db.select().from(manualCombines) as any[];
   
   const readyOrdersRaw = await db.select().from(orders).where(sql`${orders.rawStatus} IN ('5.WIP IN MOLDING', '5.1.WIP SAU MOLDING')`);
 
@@ -48,11 +49,20 @@ export default async function SchedulePage() {
     return { 
       ...o, 
       finishDate: priority?.newFinishDate || o.finishDate, 
-      isPriority: !!priority 
+      isPriority: !!priority || o.finishDate === new Date().toISOString().split('T')[0]
     };
   });
 
-  const readyGroups = groupBOMs(readyOrders);
+  const readyGroups = groupBOMs(readyOrders, manualCombinesData);
+
+  // Sắp xếp readyGroups: Hàng gấp lên đầu
+  readyGroups.sort((a, b) => {
+    const aUrgent = a.items.some((i: any) => i.isPriority);
+    const bUrgent = b.items.some((i: any) => i.isPriority);
+    if (aUrgent && !bUrgent) return -1;
+    if (!aUrgent && bUrgent) return 1;
+    return a.avgFinishDate - b.avgFinishDate;
+  });
 
   const machineConfigs = allLines.map((l: any) => ({
     ...l,
@@ -76,7 +86,11 @@ export default async function SchedulePage() {
       rawStatus: orders.rawStatus,
       brand: orders.brand,
       createdAt: productionJobs.createdAt,
-      newFinishDate: priorityOrdersSchema.newFinishDate
+      newFinishDate: priorityOrdersSchema.newFinishDate,
+      logoStatus: orders.logoStatus,
+      descriptionPU1: orders.descriptionPU1,
+      descriptionFB: orders.descriptionFB,
+      productType: orders.productType
     })
     .from(productionJobs)
     .innerJoin(orders, eq(productionJobs.orderId, orders.id))
@@ -85,11 +99,21 @@ export default async function SchedulePage() {
     .orderBy(asc(productionJobs.createdAt));
 
   const scheduleByLine = allLines.map((line: any) => {
-    const confirmedJobs = activeJobs.map(j => ({
+    const confirmedJobs = activeJobs.filter(j => j.lineId === line.id).map(j => ({
         ...j,
-        estimatedEndTime: j.newFinishDate || j.estimatedEndTime, // Override with priority date
-        isPriority: !!j.newFinishDate
-    })).filter(j => j.lineId === line.id);
+        estimatedEndTime: j.newFinishDate || j.estimatedEndTime, 
+        isPriority: !!j.newFinishDate || j.estimatedEndTime === new Date().toISOString().split('T')[0],
+        descriptionPU1: j.descriptionPU1,
+        descriptionFB: j.descriptionFB,
+        productType: j.productType
+    }));
+
+    // Sort confirmed jobs: Priority first
+    confirmedJobs.sort((a, b) => {
+        if (a.isPriority && !b.isPriority) return -1;
+        if (!a.isPriority && b.isPriority) return 1;
+        return 0;
+    });
 
     const predictedGroups = readyGroups.filter(g => draftAssignments[g.id]?.lineId === line.id);
     const lineConfig = configs.find(c => c.lineId === line.id);
@@ -108,6 +132,10 @@ export default async function SchedulePage() {
         moldType: g.moldType,
         cuttingDie: g.items[0]?.cuttingDie || '',
         rawStatus: g.items[0]?.rawStatus || '',
+        logoStatus: g.items[0]?.logoStatus || undefined,
+        descriptionPU1: g.items[0]?.descriptionPU1 || '',
+        descriptionFB: g.items[0]?.descriptionFB || '',
+        productType: g.items[0]?.productType || '',
         avgFinishDate: g.avgFinishDate,
         minFinishDate: g.items.some((i: any) => i.isPriority) 
                        ? Math.min(...g.items.filter((i: any) => i.isPriority).map((i: any) => new Date(i.finishDate).getTime()))
@@ -120,13 +148,13 @@ export default async function SchedulePage() {
   });
 
   return (
-    <div className="p-8 bg-slate-50 min-h-screen">
+    <div className="p-4 md:p-8 bg-slate-50 min-h-screen">
       <header className="max-w-7xl mx-auto mb-16">
-        <h1 className="text-6xl font-black text-slate-900 tracking-tighter">Bản Đồ Kế Hoạch Sản Xuất</h1>
+        <h1 className="text-4xl md:text-6xl font-black text-slate-900 tracking-tighter">Bản Đồ Kế Hoạch Sản Xuất</h1>
         <p className="text-slate-500 font-bold mt-2 uppercase tracking-[0.5em] text-[10px] bg-slate-200 inline-block px-3 py-1 rounded-full">Tomorrow Planning Overview</p>
       </header>
 
-      <ScheduleClient data={scheduleByLine} rawData={readyOrders} />
+      <ScheduleClient data={scheduleByLine as any} rawData={readyOrders} />
     </div>
   );
 }

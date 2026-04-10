@@ -2,7 +2,8 @@ import Link from "next/link";
 
 export default function HomePage() {
   const menuItems = [
-    { title: "Kế Hoạch Khớp Chuyền", href: "/schedule", description: "Xem tổng thể queue của từng chuyền và điều lệnh ưu tiên.", icon: "🗓️", color: "bg-indigo-600" },
+    { title: "Bảng Thống Kê", href: "/dashboard", description: "Tổng quan trạng thái đơn hàng (Urgent, Delayed, Stagnant, Stock).", icon: "📊", color: "bg-indigo-900" },
+    { title: "Kế Hoạch Khớp Chuyền", href: "/schedule", description: "Xem tổng thể queue của từng chuyền và điều lệnh ưu tiên.", icon: "🗓️", color: "bg-blue-600" },
     { title: "Giám Sát Sản Xuất", href: "/monitor", description: "Theo dõi các đơn đang chạy tại xưởng real-time.", icon: "🏭", color: "bg-emerald-600" },
     { title: "Cấu Hình Rules Chuyền", href: "/config/rules", description: "Thiết lập quy tắc chọn chuyền tự động theo thuộc tính đơn.", icon: "⚙️", color: "bg-slate-800" },
     { title: "Đơn Hàng Gấp", href: "/config/priority", description: "Ghi đè hạn hoàn thành và gán độ ưu tiên cao.", icon: "🚀", color: "bg-rose-600" },

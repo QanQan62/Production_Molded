@@ -9,12 +9,14 @@ export async function POST(req: Request) {
     await db.insert(priorityOrders).values({
       orderId: body.orderId,
       newFinishDate: body.newFinishDate,
-      reason: body.reason || "HÀNG GẤP"
+      reason: body.reason || "HÀNG GẤP",
+      exportTime: body.exportTime || null
     }).onConflictDoUpdate({
       target: priorityOrders.orderId,
       set: {
         newFinishDate: body.newFinishDate,
-        reason: body.reason || "HÀNG GẤP"
+        reason: body.reason || "HÀNG GẤP",
+        exportTime: body.exportTime || null
       }
     });
     return NextResponse.json({ success: true });
@@ -26,9 +28,11 @@ export async function POST(req: Request) {
 export async function DELETE(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const id = Number(searchParams.get("id"));
-    if (id) {
-      await db.delete(priorityOrders).where(eq(priorityOrders.id, id));
+    const id = searchParams.get("id");
+    if (id === "all") {
+      await db.delete(priorityOrders);
+    } else if (id) {
+       await db.delete(priorityOrders).where(eq(priorityOrders.id, Number(id)));
     }
     return NextResponse.json({ success: true });
   } catch (e: any) {

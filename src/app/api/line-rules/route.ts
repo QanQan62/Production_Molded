@@ -9,7 +9,7 @@ export async function POST(req: Request) {
     await db.insert(lineRules).values({
       lineId: body.lineId,
       ruleType: body.ruleType || 'BRAND',
-      ruleValue: body.ruleValue ? body.ruleValue.trim() : body.brand.trim()
+      ruleValue: body.ruleValue ? String(body.ruleValue).trim() : ""
     });
     return NextResponse.json({ success: true });
   } catch (e: any) {
@@ -20,9 +20,11 @@ export async function POST(req: Request) {
 export async function DELETE(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const id = Number(searchParams.get("id"));
-    if (id) {
-      await db.delete(lineRules).where(eq(lineRules.id, id));
+    const id = searchParams.get("id");
+    if (id === "all") {
+      await db.delete(lineRules);
+    } else if (id) {
+       await db.delete(lineRules).where(eq(lineRules.id, Number(id)));
     }
     return NextResponse.json({ success: true });
   } catch (e: any) {

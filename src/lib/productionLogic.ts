@@ -35,47 +35,70 @@ function parseExcelDate(dateStr: any) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-export function groupBOMs(allOrders: Order[]) {
-    const moldingOutOrders = allOrders.filter(o => o.moldOutDate && o.bom);
-    const moldingInOrders = allOrders.filter(o => !o.moldOutDate && o.moldInDate && o.bom);
+export function groupBOMs(allOrders: Order[], manualCombines: { orderId: string, combineName: string }[] = []) {
+    const manualMap = new Map(manualCombines.map(c => [c.orderId, c.combineName]));
+    
+    const manualGroupItems: Record<string, Order[]> = {};
+    const regularOrders: Order[] = [];
 
-  const groupListByDateRule = (orders: Order[]) => {
-    const initialGroups: Record<string, Order[]> = {};
-    orders.forEach(order => {
-      const key = `${order.bom}_${order.status}`;
-      if (!initialGroups[key]) initialGroups[key] = [];
-      initialGroups[key].push(order);
-    });
-
-    const finalSubGroups: any[] = [];
-    Object.values(initialGroups).forEach(group => {
-      const sorted = [...group].sort((a, b) => new Date(a.moldInDate!).getTime() - new Date(b.moldInDate!).getTime());
-      
-      let currentSub: Order[] = [];
-      let minDate: number | null = null;
-
-      sorted.forEach(order => {
-        const orderDate = new Date(order.moldInDate!).getTime();
-        const fourDaysInMs = 4 * 24 * 60 * 60 * 1000;
-
-        if (minDate === null || orderDate - minDate > fourDaysInMs) {
-          if (currentSub.length > 0) finalSubGroups.push(createGroupMetaData(currentSub));
-          currentSub = [order];
-          minDate = orderDate;
+    allOrders.forEach(o => {
+        const cName = manualMap.get(o.id);
+        if (cName) {
+            if (!manualGroupItems[cName]) manualGroupItems[cName] = [];
+            manualGroupItems[cName].push(o);
         } else {
-          currentSub.push(order);
+            regularOrders.push(o);
         }
-      });
-      if (currentSub.length > 0) finalSubGroups.push(createGroupMetaData(currentSub));
     });
-    return finalSubGroups.sort((a, b) => a.avgFinishDate - b.avgFinishDate);
-  };
 
-  const moldingOutGroups = groupListByDateRule(moldingOutOrders).map(g => ({ ...g, type: 'OUT' }));
-  const moldingInGroups = groupListByDateRule(moldingInOrders).map(g => ({ ...g, type: 'IN' }));
+    const moldingOutOrders = regularOrders.filter(o => o.moldOutDate && o.bom);
+    const moldingInOrders = regularOrders.filter(o => !o.moldOutDate && o.moldInDate && o.bom);
 
-  // Trả về Out trước In
-  return [...moldingOutGroups, ...moldingInGroups];
+    const groupListByDateRule = (orders: Order[]) => {
+        const initialGroups: Record<string, Order[]> = {};
+        orders.forEach(order => {
+          // Bổ sung logoStatus vào key để tách nhóm nếu Logo status khác nhau
+          const logoKey = order.logoStatus || "Không in";
+          const key = `${order.bom}_${order.status}_${logoKey}`;
+          if (!initialGroups[key]) initialGroups[key] = [];
+          initialGroups[key].push(order);
+        });
+
+        const finalSubGroups: any[] = [];
+        Object.values(initialGroups).forEach(group => {
+          const sorted = [...group].sort((a, b) => new Date(a.moldInDate!).getTime() - new Date(b.moldInDate!).getTime());
+          
+          let currentSub: Order[] = [];
+          let minDate: number | null = null;
+
+          sorted.forEach(order => {
+            const orderDate = new Date(order.moldInDate!).getTime();
+            const fourDaysInMs = 4 * 24 * 60 * 60 * 1000;
+
+            if (minDate === null || orderDate - minDate > fourDaysInMs) {
+              if (currentSub.length > 0) finalSubGroups.push(createGroupMetaData(currentSub));
+              currentSub = [order];
+              minDate = orderDate;
+            } else {
+              currentSub.push(order);
+            }
+          });
+          if (currentSub.length > 0) finalSubGroups.push(createGroupMetaData(currentSub));
+        });
+        return finalSubGroups.sort((a, b) => a.avgFinishDate - b.avgFinishDate);
+    };
+
+    const moldingOutGroups = groupListByDateRule(moldingOutOrders).map(g => ({ ...g, type: 'OUT' }));
+    const moldingInGroups = groupListByDateRule(moldingInOrders).map(g => ({ ...g, type: 'IN' }));
+
+    const manualFinalGroups = Object.keys(manualGroupItems).map(cName => {
+        const items = manualGroupItems[cName];
+        const g = createGroupMetaData(items);
+        return { ...g, id: `MANUAL_${cName}`, isManual: true };
+    });
+
+    // Trả về Manual trước, xong đến Out, xong đến In
+    return [...manualFinalGroups, ...moldingOutGroups, ...moldingInGroups];
 }
 
 function createGroupMetaData(items: Order[]) {

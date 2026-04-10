@@ -7,6 +7,7 @@ export default function Navigation() {
   const pathname = usePathname();
 
   const links = [
+    { name: "Thống kê", href: "/dashboard", icon: "📊" },
     { name: "Kế hoạch ngày mai", href: "/schedule", icon: "🗓️" },
     { name: "Giám sát xưởng", href: "/monitor", icon: "🏭" },
     { name: "Cấu hình Chuyền", href: "/config/rules", icon: "⚙️" },
@@ -18,7 +19,9 @@ export default function Navigation() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex h-20 items-center justify-between">
           <div className="flex items-center gap-8">
-            <span className="text-2xl font-black bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent tracking-tighter">OVN_PPC</span>
+            <Link href="/" className="text-2xl font-black bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent tracking-tighter hover:opacity-80 transition-opacity">
+                OVN_PRODUCTION
+            </Link>
             <div className="hidden md:flex items-center space-x-1">
               {links.map((link) => {
                 const isActive = pathname === link.href;
@@ -41,7 +44,6 @@ export default function Navigation() {
           </div>
           <div className="flex items-center gap-3">
              <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></div>
-             <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">System Online</span>
           </div>
         </div>
       </div>

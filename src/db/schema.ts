@@ -15,6 +15,13 @@ export const orders = sqliteTable('orders', {
   sourceLine: text('source_line'),
   leanlineInDate: text('leanline_in_date'),
   cuttingDie: text('cutting_die'),
+  receivedLogo: text('received_logo'),
+  codeLogo1: text('code_logo1'),
+  thangHoa: text('thang_hoa'),
+  productType: text('product_type'),
+  logoStatus: text('logo_status'),
+  descriptionPU1: text('description_pu1'),
+  descriptionFB: text('description_fb'),
 });
 
 export const lineRules = sqliteTable('line_rules', {
@@ -29,6 +36,7 @@ export const priorityOrders = sqliteTable('priority_orders', {
   orderId: text('order_id').unique().notNull(),
   newFinishDate: text('new_finish_date').notNull(),
   reason: text('reason'),
+  exportTime: text('export_time'),
 });
 
 export const lines = sqliteTable('lines', {
@@ -61,4 +69,15 @@ export const lineConfigs = sqliteTable('line_configs', {
 export const systemConfig = sqliteTable('system_config', {
   key: text('key').primaryKey(),
   value: text('value'),
+});
+
+export const moldTypes = sqliteTable('mold_types', {
+  mold: text('mold').primaryKey(),
+  type: text('type').notNull(), // 1k1s, 1k3s, SP
+});
+
+export const manualCombines = sqliteTable('manual_combines', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  orderId: text('order_id').unique().notNull(),
+  combineName: text('combine_name').notNull(),
 });

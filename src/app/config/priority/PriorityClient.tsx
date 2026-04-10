@@ -40,6 +40,19 @@ export default function PriorityClient({ orders, initialPriority }: { orders: an
     }
   };
 
+  const handleDeleteAll = async () => {
+    if (!confirm("Xóa TẤT CẢ các đơn đang thiết lập gấp?")) return;
+    setLoading(true);
+    try {
+      await fetch(`/api/priority?id=all`, { method: "DELETE" });
+      window.location.reload();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -52,10 +65,8 @@ export default function PriorityClient({ orders, initialPriority }: { orders: an
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows: any[] = utils.sheet_to_json(ws, { header: 1 });
 
-      // Bỏ header row nếu có
       const dataRows = rows.filter((row, idx) => {
         if (idx === 0) {
-          // Nếu dòng đầu chứa text không phải PRO ORDER thì skip
           const first = String(row[0] || "").trim();
           if (first && !first.match(/^PRO/i)) return false;
           if (first.toLowerCase().includes("order") || first.toLowerCase().includes("mã")) return false;
@@ -70,19 +81,18 @@ export default function PriorityClient({ orders, initialPriority }: { orders: an
         const orderId = String(row[0]).trim();
         let newFinishDate = "";
 
-        // Xử lý ngày: có thể là chuỗi hoặc số Excel serial
         const dateVal = row[1];
         if (typeof dateVal === "number") {
-          // Excel serial date
           const date = new Date((dateVal - 25569) * 86400 * 1000);
           newFinishDate = date.toISOString().split("T")[0];
         } else {
-          // Thử parse chuỗi ngày
           const parsed = new Date(String(dateVal).trim());
           if (!isNaN(parsed.getTime())) {
             newFinishDate = parsed.toISOString().split("T")[0];
           }
         }
+
+        const exportTime = row[2] ? String(row[2]).trim() : null;
 
         if (!orderId || !newFinishDate) {
           failCount++;
@@ -93,7 +103,12 @@ export default function PriorityClient({ orders, initialPriority }: { orders: an
           const resp = await fetch("/api/priority", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ orderId, newFinishDate, reason: "HÀNG GẤP (Excel)" }),
+            body: JSON.stringify({ 
+                orderId, 
+                newFinishDate, 
+                reason: exportTime ? `GẤP - GIỜ XUẤT: ${exportTime}` : "HÀNG GẤP (Excel)",
+                exportTime
+            }),
           });
           if (resp.ok) successCount++;
           else failCount++;
@@ -119,10 +134,21 @@ export default function PriorityClient({ orders, initialPriority }: { orders: an
     <div className="space-y-8">
       {/* Section 1: Upload Excel */}
       <div className="bg-white p-8 rounded-[2rem] shadow-xl border-2 border-dashed border-rose-200">
-        <h2 className="text-xl font-bold mb-4 uppercase tracking-widest text-slate-600">📤 Upload Excel Đơn Gấp</h2>
-        <p className="text-sm text-slate-500 mb-6">
-          File Excel cần có: <strong>Cột 1</strong> = Mã đơn (PRO ORDER), <strong>Cột 2</strong> = Ngày Finish Date mới.
-        </p>
+        <div className="flex justify-between items-start mb-4">
+            <div>
+                <h2 className="text-xl font-bold uppercase tracking-widest text-slate-600">📤 Upload Excel Đơn Gấp</h2>
+                <p className="text-sm text-slate-500 mt-2">
+                File Excel cần có: <strong>Cột 1</strong> = Mã đơn (PRO ORDER), <strong>Cột 2</strong> = Finish Date, <strong>Cột 3</strong> (tùy chọn) = Giờ xuất.
+                </p>
+            </div>
+            <button 
+                onClick={handleDeleteAll}
+                disabled={loading}
+                className="bg-slate-100 text-slate-500 px-6 py-3 rounded-2xl font-bold text-xs uppercase hover:bg-red-50 hover:text-red-500 transition-all"
+            >
+                Xóa tất cả đơn gấp
+            </button>
+        </div>
         <div className="flex items-center gap-4">
           <input
             ref={fileRef}
@@ -183,6 +209,7 @@ export default function PriorityClient({ orders, initialPriority }: { orders: an
             <tr>
               <th className="px-8 py-5">PRO ORDER</th>
               <th className="px-8 py-5">Thông tin hàng</th>
+              <th className="px-8 py-5">Giờ Xuất</th>
               <th className="px-8 py-5">Hạn hoàn thành GẤP</th>
               <th className="px-8 py-5 text-right">Quản lý</th>
             </tr>
@@ -197,6 +224,10 @@ export default function PriorityClient({ orders, initialPriority }: { orders: an
                   </td>
                   <td className="px-8 py-6">
                      <p className="text-xs font-bold text-slate-500">{orderInfo?.brand} | BOM {orderInfo?.bom}</p>
+                     {p.reason && p.reason !== "HÀNG GẤP" && <p className="text-[10px] text-slate-400 font-bold uppercase">{p.reason}</p>}
+                  </td>
+                  <td className="px-8 py-6">
+                     <span className="font-bold text-slate-700">{p.exportTime || "-"}</span>
                   </td>
                   <td className="px-8 py-6 font-black text-slate-900">
                      {new Date(p.newFinishDate).toLocaleDateString('vi-VN')}
@@ -214,7 +245,7 @@ export default function PriorityClient({ orders, initialPriority }: { orders: an
             })}
             {initialPriority.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-8 py-20 text-center text-slate-400 font-bold uppercase italic">
+                <td colSpan={5} className="px-8 py-20 text-center text-slate-400 font-bold uppercase italic">
                    Không có đơn nào đang được thiết lập GẤP.
                 </td>
               </tr>

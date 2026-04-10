@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { lines, lineRules } from "@/db/schema";
+import { lines, lineRules, orders } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import RulesClient from "./RulesClient";
 
@@ -10,16 +10,18 @@ export default async function RulesPage() {
   
   const currentRules = await db.select().from(lineRules);
 
-  const rawOrders = await db.select().from(require('@/db/schema').orders);
+  const rawOrders = await db.select().from(orders);
   
-  const uniqueBrands = Array.from(new Set(rawOrders.map(o => o.brand).filter(Boolean)));
-  const uniqueMolds = Array.from(new Set(rawOrders.map(o => o.moldType).filter(Boolean)));
-  const uniqueCustomers = Array.from(new Set(rawOrders.map(o => o.articleCode).filter(Boolean)));
+  const uniqueBrands = Array.from(new Set(rawOrders.map(o => o.brand).filter(Boolean))) as string[];
+  const uniqueMolds = Array.from(new Set(rawOrders.map(o => o.moldType).filter(Boolean))) as string[];
+  const uniqueCustomers = Array.from(new Set(rawOrders.map(o => o.articleCode).filter(Boolean))) as string[];
   
   const fieldOptions = {
       'BRAND': uniqueBrands,
       'MOLD': uniqueMolds,
-      'ARTICLE': uniqueCustomers
+      'ARTICLE': uniqueCustomers,
+      'PRODUCT_TYPE': ['1k1s', '1k3s', 'SP'],
+      'THANG_HOA': ['Có', 'Không']
   };
 
   return (

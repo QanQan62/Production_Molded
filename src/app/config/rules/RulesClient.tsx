@@ -6,17 +6,25 @@ export default function RulesClient({ lines, initialRules, fieldOptions }: { lin
   const [rules, setRules] = useState(initialRules);
   const [loading, setLoading] = useState(false);
   const [newRule, setNewRule] = useState({ lineId: lines[0]?.id || "", ruleType: "BRAND", ruleValue: "" });
+  const [rangeValue, setRangeValue] = useState({ min: "", max: "" });
   
   const selectedOptions = fieldOptions[newRule.ruleType] || [];
 
   const handleAdd = async () => {
-    if (!newRule.ruleValue) return;
+    let finalValue = newRule.ruleValue;
+    if (newRule.ruleType === 'TOTAL_QTY_RANGE') {
+        if (!rangeValue.min || !rangeValue.max) return;
+        finalValue = `${rangeValue.min}-${rangeValue.max}`;
+    }
+
+    if (!finalValue) return;
+
     setLoading(true);
     try {
       const resp = await fetch("/api/line-rules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newRule),
+        body: JSON.stringify({ ...newRule, ruleValue: finalValue }),
       });
       if (resp.ok) {
         window.location.reload();
@@ -41,10 +49,32 @@ export default function RulesClient({ lines, initialRules, fieldOptions }: { lin
     }
   };
 
+  const handleDeleteAll = async () => {
+    if (!confirm("Xóa TẤT CẢ các rule đang có?")) return;
+    setLoading(true);
+    try {
+      await fetch(`/api/line-rules?id=all`, { method: "DELETE" });
+      window.location.reload();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-8" style={{ fontFamily: 'Arial, sans-serif' }}>
       <div className="bg-white p-8 rounded-[2rem] shadow-xl border border-slate-200">
-        <h2 className="text-xl font-bold mb-6 uppercase tracking-widest text-slate-400">Thêm Rule Mới</h2>
+        <div className="flex justify-between items-start mb-6">
+            <h2 className="text-xl font-bold uppercase tracking-widest text-slate-400">Thêm Rule Mới</h2>
+            <button 
+                onClick={handleDeleteAll}
+                disabled={loading}
+                className="bg-slate-100 text-slate-500 px-6 py-3 rounded-2xl font-bold text-xs uppercase hover:bg-red-50 hover:text-red-500 transition-all"
+            >
+                Xóa tất cả rules
+            </button>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
           <div className="flex flex-col gap-2">
             <label className="text-[10px] uppercase font-bold text-slate-400 tracking-widest ml-1">Chọn Chuyền</label>
@@ -66,20 +96,52 @@ export default function RulesClient({ lines, initialRules, fieldOptions }: { lin
               <option value="BRAND">Brand</option>
               <option value="MOLD">Mã Khuôn (MOLDTYPE)</option>
               <option value="ARTICLE">Article</option>
+              <option value="PRODUCT_TYPE">Product Type (1k1s, 1k3s, SP)</option>
+              <option value="TOTAL_QTY_GT">Tổng Qty BOM (Lớn hơn)</option>
+              <option value="TOTAL_QTY_LT">Tổng Qty BOM (Nhỏ hơn)</option>
+              <option value="TOTAL_QTY_RANGE">Tổng Qty BOM (Trong Khoảng)</option>
+              <option value="THANG_HOA">Có/Không Thăng Hoa</option>
             </select>
           </div>
           <div className="flex flex-col gap-2">
             <label className="text-[10px] uppercase font-bold text-slate-400 tracking-widest ml-1">Giá trị Điều kiện</label>
-            <select 
-              className="p-4 bg-slate-50 border-2 border-slate-200 rounded-2xl font-bold outline-none focus:border-indigo-500"
-              value={newRule.ruleValue}
-              onChange={e => setNewRule({ ...newRule, ruleValue: e.target.value })}
-            >
-              <option value="">-- Chọn giá trị --</option>
-              {selectedOptions.map((opt: string, idx: number) => (
-                <option key={idx} value={opt}>{opt}</option>
-              ))}
-            </select>
+            {newRule.ruleType === 'TOTAL_QTY_RANGE' ? (
+                <div className="flex gap-2">
+                    <input 
+                        type="number"
+                        placeholder="Từ..."
+                        className="w-1/2 p-4 bg-slate-50 border-2 border-slate-200 rounded-2xl font-bold outline-none focus:border-indigo-500"
+                        value={rangeValue.min}
+                        onChange={e => setRangeValue({ ...rangeValue, min: e.target.value })}
+                    />
+                    <input 
+                        type="number"
+                        placeholder="Đến..."
+                        className="w-1/2 p-4 bg-slate-50 border-2 border-slate-200 rounded-2xl font-bold outline-none focus:border-indigo-500"
+                        value={rangeValue.max}
+                        onChange={e => setRangeValue({ ...rangeValue, max: e.target.value })}
+                    />
+                </div>
+            ) : newRule.ruleType.startsWith('TOTAL_QTY') ? (
+               <input 
+                 type="number"
+                 placeholder="Nhập số lượng..."
+                 className="p-4 bg-slate-50 border-2 border-slate-200 rounded-2xl font-bold outline-none focus:border-indigo-500"
+                 value={newRule.ruleValue}
+                 onChange={e => setNewRule({ ...newRule, ruleValue: e.target.value })}
+               />
+            ) : (
+                <select 
+                className="p-4 bg-slate-50 border-2 border-slate-200 rounded-2xl font-bold outline-none focus:border-indigo-500"
+                value={newRule.ruleValue}
+                onChange={e => setNewRule({ ...newRule, ruleValue: e.target.value })}
+                >
+                <option value="">-- Chọn giá trị --</option>
+                {selectedOptions.map((opt: string, idx: number) => (
+                    <option key={idx} value={opt}>{opt}</option>
+                ))}
+                </select>
+            )}
           </div>
           <button 
             disabled={loading}
@@ -114,7 +176,9 @@ export default function RulesClient({ lines, initialRules, fieldOptions }: { lin
                 </td>
                 <td className="px-8 py-6">
                    <span className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full font-bold text-sm uppercase">
-                     {rule.ruleValue}
+                     {rule.ruleType === 'TOTAL_QTY_RANGE' ? `Khoảng ${rule.ruleValue}` : 
+                      rule.ruleType === 'TOTAL_QTY_GT' ? `> ${rule.ruleValue}` : 
+                      rule.ruleType === 'TOTAL_QTY_LT' ? `< ${rule.ruleValue}` : rule.ruleValue}
                    </span>
                 </td>
                 <td className="px-8 py-6 text-right">
@@ -129,7 +193,7 @@ export default function RulesClient({ lines, initialRules, fieldOptions }: { lin
             ))}
             {rules.length === 0 && (
               <tr>
-                <td colSpan={3} className="px-8 py-20 text-center text-slate-400 font-bold uppercase italic">
+                <td colSpan={4} className="px-8 py-20 text-center text-slate-400 font-bold uppercase italic">
                    Chưa có rule nào được thiết lập.
                 </td>
               </tr>
