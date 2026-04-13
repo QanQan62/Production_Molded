@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
+import { groupBOMs } from "@/lib/productionLogic";
+import { Filter, Search, Grid, List, CheckCircle, Clock, AlertTriangle, AlertCircle, Package, FileDown, RefreshCcw, Layers } from "lucide-react";
 
 type Job = {
   type: 'CONFIRMED';
@@ -49,24 +51,124 @@ type LineSchedule = {
   predicted: PredictedGroup[];
 };
 
-export default function ScheduleClient({ data, rawData }: { data: LineSchedule[], rawData: any[] }) {
+export default function ScheduleClient({ data, rawData, manualCombines, knownMolds = [] }: { data: LineSchedule[], rawData: any[], manualCombines: any[], knownMolds?: string[] }) {
   const [activeTab, setActiveTab] = useState('SCHEDULE'); 
   const [activeLineId, setActiveLineId] = useState(data[0]?.id);
+  const [combineMode, setCombineMode] = useState<'AUTO' | 'MANUAL'>('AUTO');
+  const [filters, setFilters] = useState({
+    urgent: false,
+    delayed: false,
+    noLogo: false,
+    oldStock: false
+  });
+  const [searchTerm, setSearchTerm] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 50;
 
-  const activeLine = data.find((l) => l.id === activeLineId);
-  const confirmed = activeLine?.confirmed || [];
-  const predicted = activeLine?.predicted || [];
+  const [sortConfig, setSortConfig] = useState<{key: string, direction: 'asc' | 'desc'} | null>(null);
+
+  const activeLineRaw = data.find((l) => l.id === activeLineId);
+  
+  // Re-group or Filter
+  const processData = () => {
+    if (!activeLineRaw) return [];
+
+    let currentConfirmed = activeLineRaw.confirmed;
+    let currentPredicted = activeLineRaw.predicted;
+
+    // If combine mode is MANUAL, we might need to regroup the raw orders assigned to this line
+    if (combineMode === 'MANUAL') {
+        // Extract all raw orders that were predicted for this line in the server's AUTO result
+        const predictedIds = new Set(activeLineRaw.predicted.flatMap(p => p.items.map(i => i.id)));
+        const ordersForLine = rawData.filter(o => predictedIds.has(o.id));
+        
+        const manualGroups = groupBOMs(ordersForLine, manualCombines, 'MANUAL');
+        currentPredicted = manualGroups.map(g => ({
+            ...g,
+            type: 'PREDICTED',
+            items: g.items,
+            moldType: g.moldType,
+            cuttingDie: g.items[0]?.cuttingDie || '',
+            rawStatus: g.items[0]?.rawStatus || '',
+            logoStatus: g.items[0]?.logoStatus || undefined,
+            descriptionPU1: g.items[0]?.descriptionPU1 || '',
+            descriptionFB: g.items[0]?.descriptionFB || '',
+            productType: g.items[0]?.productType || '',
+            isPriority: g.items.some((i: any) => i.isPriority)
+        } as PredictedGroup));
+    }
+
+    let all = [
+        ...currentConfirmed.map(j => ({ ...j, type: 'CONFIRMED' as const })),
+        ...currentPredicted.map(p => ({ ...p, type: 'PREDICTED' as const }))
+    ];
+
+    // Apply Filters
+    if (filters.urgent) all = all.filter(i => i.isPriority);
+    if (filters.noLogo) all = all.filter(i => i.logoStatus === 'Chưa có Logo');
+    if (filters.delayed) {
+        const today = new Date().toISOString().split('T')[0];
+        all = all.filter(i => {
+            const fd = i.type === 'CONFIRMED' ? i.estimatedEndTime : (new Date(i.minFinishDate).toISOString().split('T')[0]);
+            return fd && fd < today;
+        });
+    }
+    // Search
+    if (searchTerm) {
+        const lowerSearch = searchTerm.toLowerCase();
+        all = all.filter(i => 
+            (i.bom?.toLowerCase().includes(lowerSearch)) ||
+            (i.type === 'CONFIRMED' ? i.orderId?.toLowerCase().includes(lowerSearch) : i.items.some(it => it.id.toLowerCase().includes(lowerSearch))) ||
+            (i.moldType?.toLowerCase().includes(lowerSearch)) ||
+            ((i.type === 'CONFIRMED' ? i.brand : i.items[0]?.brand)?.toLowerCase().includes(lowerSearch))
+        );
+    }
+
+    // Sort
+    if (sortConfig) {
+        all.sort((a, b) => {
+            let valA: any, valB: any;
+            if (sortConfig.key === 'bom') { valA = a.bom; valB = b.bom; }
+            if (sortConfig.key === 'order') { valA = a.type === 'CONFIRMED' ? a.orderId : a.items[0]?.id; valB = b.type === 'CONFIRMED' ? b.orderId : b.items[0]?.id; }
+            if (sortConfig.key === 'brand') { valA = a.type === 'CONFIRMED' ? a.brand : a.items[0]?.brand; valB = b.type === 'CONFIRMED' ? b.brand : b.items[0]?.brand; }
+            if (sortConfig.key === 'qty') { valA = a.type === 'CONFIRMED' ? a.qty : a.totalQuantity; valB = b.type === 'CONFIRMED' ? b.qty : b.totalQuantity; }
+            if (sortConfig.key === 'finish') { valA = a.type === 'CONFIRMED' ? a.estimatedEndTime : a.minFinishDate; valB = b.type === 'CONFIRMED' ? b.estimatedEndTime : b.minFinishDate; }
+            
+            if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+            if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+            return 0;
+        });
+    }
+
+    return all;
+  };
+
+  const filteredItems = processData();
+  const totalPairs = filteredItems.reduce((sum, i) => sum + (i.type === 'CONFIRMED' ? (i.qty || 0) : i.totalQuantity), 0);
+  const displayed = filteredItems.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  const totalPages = Math.ceil(filteredItems.length / itemsPerPage);
+
+  const unknownMolds = React.useMemo(() => {
+     const standardMolds = ['1K1S', '1K3S', 'SP', 'DIE-CUT', 'LAMINATING', 'DIE CUT'];
+     const mappedKnownMolds = knownMolds.map(m => m.toUpperCase());
+     
+     const found = new Set<string>();
+     rawData.forEach(o => {
+         const mold = (o.moldType || "").toUpperCase().trim();
+         if (mold && !standardMolds.includes(mold) && !mappedKnownMolds.includes(mold)) {
+             found.add(mold);
+         }
+     });
+     return Array.from(found);
+  }, [rawData, knownMolds]);
 
   const handleRefresh = async () => {
     setSyncing(true);
     try {
       const resp = await fetch("/api/sync", { method: "POST" });
       if (resp.ok) {
-        alert("Đã làm mới dữ liệu thành công!");
         window.location.reload();
       }
     } catch (e) {
@@ -78,314 +180,345 @@ export default function ScheduleClient({ data, rawData }: { data: LineSchedule[]
 
   const handleExportExcel = async () => {
     const { utils, writeFile } = await import("xlsx");
-    const exportData = rawData.map(o => ({
-      "Line sắp vào": o.sourceLine || activeLine?.lineCode, 
-      "Pro order": o.orderId || o.id,
-      "brand": o.brand,
-      "article": o.articleCode,
-      "Qty": o.quantity,
-      "BOM": o.bom,
-      "Moldtype": o.moldType,
-      "ProductType": o.productType,
-      "#Last": o.cuttingDie,
-      "PU description": o.descriptionPU1, 
-      "FB description": o.descriptionFB, 
-      "code Logo1": o.codeLogo1,
-      "Finish date": o.finishDate,
-      "Status": o.rawStatus,
-      "Note": `${o.isPriority ? "HÀNG GẤP" : ""} ${o.logoStatus ? `(${o.logoStatus})` : ""} [${o.productType || "---"}]`
-    }));
+    const exportData = filteredItems.map((o: any) => {
+        const ids = o.type === 'CONFIRMED' ? o.orderId : o.items.map((i: any) => i.id).join(', ');
+        const qty = o.type === 'CONFIRMED' ? o.qty : o.totalQuantity;
+        const finish = o.type === 'CONFIRMED' ? o.estimatedEndTime : new Date(o.minFinishDate).toLocaleDateString();
+        
+        const isPriority = o.type === 'CONFIRMED' ? o.isPriority : o.items.some((i: any) => i.isPriority);
+        const today = new Date().toISOString().split('T')[0];
+        const rawFinishDate = o.type === 'CONFIRMED' ? o.estimatedEndTime : (new Date(o.minFinishDate).toISOString().split('T')[0]);
+        const isDelayed = rawFinishDate && rawFinishDate < today;
+        
+        let note = "Bình thường";
+        if (isPriority) note = "Gấp";
+        else if (isDelayed) note = "Trễ";
+        else if (o.logoStatus === "Chưa có Logo") note = "Chưa có Logo";
+
+        return {
+            "BOM": o.bom,
+            "Moldtype": o.moldType,
+            "Orders": ids,
+            "Qty": qty,
+            "Finish date": finish,
+            "Status": o.type === 'CONFIRMED' ? o.status : o.rawStatus,
+            "Type": o.productType || "---",
+            "Loại lưu ý": note
+        };
+    });
 
     const ws = utils.json_to_sheet(exportData);
     const wb = utils.book_new();
     utils.book_append_sheet(wb, ws, "Schedule");
-    writeFile(wb, `KeHoachChuyen_${new Date().toISOString().split('T')[0]}.xlsx`);
+    writeFile(wb, `Schedule_${activeLineRaw?.lineCode}_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
-
-  const handleManualCombineUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
-    try {
-        const { read, utils } = await import("xlsx");
-        const arrayBuffer = await file.arrayBuffer();
-        const wb = read(arrayBuffer);
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const rows: any[] = utils.sheet_to_json(ws, { header: 1 });
-        const dataRows = rows.slice(1).filter(r => r[0] && r[1]); 
-
-        const resp = await fetch("/api/manual-combine", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ combines: dataRows.map(r => ({ orderId: String(r[0]).trim(), combineName: String(r[1]).trim() })) })
-        });
-        if (resp.ok) {
-            alert("Đã upload dữ liệu combine thành công!");
-            window.location.reload();
-        }
-    } catch (e) {
-        alert("Lỗi khi upload combine.");
-    } finally {
-        setLoading(false);
-    }
-  };
-
-  const allInView: Array<Job | PredictedGroup> = [
-    ...confirmed.map(j => ({ ...j, type: 'CONFIRMED' as const })),
-    ...predicted.map(p => ({ ...p, type: 'PREDICTED' as const }))
-  ];
-
-  const totalItems = allInView.length;
-  const totalPages = Math.ceil(totalItems / itemsPerPage);
-  const displayed = allInView.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const getRowStyle = (item: any) => {
-    const isUrgent = item.isPriority;
-    const finishDate = item.type === 'CONFIRMED' ? (item.estimatedEndTime) : (item.minFinishDate ? new Date(item.minFinishDate).toISOString().split('T')[0] : null);
-    const isDelayed = finishDate && finishDate < new Date().toISOString().split('T')[0];
-    const logoStatus = item.logoStatus;
-    const isStagnant = logoStatus === "Chưa có Logo";
-
-    if (isUrgent) return "bg-rose-50 hover:bg-rose-100/80 border-rose-600";
-    if (isDelayed) return "bg-purple-50 hover:bg-purple-100/80 border-purple-600";
-    if (isStagnant) return "bg-amber-50 hover:bg-amber-100/80 border-amber-600";
-    return "bg-slate-50 hover:bg-indigo-50 border-indigo-400";
-  };
-
-  const getLabel = (item: any) => {
-    const finishDate = item.type === 'CONFIRMED' ? (item.estimatedEndTime) : (item.minFinishDate ? new Date(item.minFinishDate).toISOString().split('T')[0] : null);
-    const isDelayed = finishDate && finishDate < new Date().toISOString().split('T')[0];
-    const logoStatus = item.logoStatus;
-    if (item.isPriority) return "GẤP";
-    if (isDelayed) return "TRỄ";
-    if (logoStatus === "Chưa có Logo") return "CHƯA LOGO";
-    return null;
+    const today = new Date().toISOString().split('T')[0];
+    const finishDate = item.type === 'CONFIRMED' ? item.estimatedEndTime : (new Date(item.minFinishDate).toISOString().split('T')[0]);
+    
+    if (item.isPriority) return "bg-rose-100 hover:bg-rose-200 border-rose-500 shadow-[inset_4px_0_0_0_#e11d48]";
+    if (finishDate && finishDate < today) return "bg-purple-100 hover:bg-purple-200 border-purple-500 shadow-[inset_4px_0_0_0_#9333ea]";
+    if (item.logoStatus === "Chưa có Logo") return "bg-amber-100 hover:bg-amber-200 border-amber-500 shadow-[inset_4px_0_0_0_#d97706]";
+    return "bg-white hover:bg-slate-50 border-slate-200";
   };
 
   return (
-    <div className="max-w-7xl mx-auto space-y-8 pb-20 px-4" style={{ fontFamily: 'Arial, sans-serif' }}>
-      <div className="flex flex-col md:flex-row justify-between items-center bg-white p-6 rounded-[2.5rem] shadow-xl border border-slate-100 gap-4">
+    <div className="max-w-[1600px] mx-auto space-y-6 pb-20 font-inter">
+      {/* Top Header / Actions */}
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6 bg-white p-8 rounded-[3rem] shadow-xl border border-slate-50">
         <div className="flex items-center gap-6">
-           <div className="hidden md:block bg-slate-900 text-white p-4 rounded-3xl">
-              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+           <div className="p-4 bg-indigo-600 text-white rounded-[2rem] shadow-lg shadow-indigo-100">
+              <Layers className="w-8 h-8" />
            </div>
            <div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Dữ liệu hiện tại</p>
-              <p className="text-xl font-black text-slate-900 uppercase">Tổng cộng {rawData.length} đơn hàng WIP</p>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest font-outfit">Sẵn sàng phân bổ</p>
+              <h2 className="text-2xl font-black text-slate-900 uppercase font-outfit">
+                {rawData.length} đơn hàng <span className="text-indigo-600 text-lg ml-2">WIP MOLDING</span>
+              </h2>
            </div>
         </div>
-        <div className="flex flex-wrap gap-4">
+
+        <div className="flex flex-wrap gap-3">
+          <div className="flex bg-slate-100 p-1 rounded-2xl">
+            <button 
+                onClick={() => setCombineMode('AUTO')}
+                className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${combineMode === 'AUTO' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
+            >
+                Auto Group (Mode 1)
+            </button>
+            <button 
+                onClick={() => setCombineMode('MANUAL')}
+                className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${combineMode === 'MANUAL' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
+            >
+                Manual (Mode 2)
+            </button>
+          </div>
           <button 
                 onClick={() => setActiveTab(activeTab === 'SCHEDULE' ? 'CONFIG' : 'SCHEDULE')}
-                className="px-6 py-4 bg-slate-100 text-slate-600 rounded-3xl font-bold text-sm hover:bg-slate-200 transition-all font-sans"
+                className="flex items-center gap-2 px-6 py-3 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all font-outfit"
           >
-              {activeTab === 'SCHEDULE' ? '⚙️ Cấu hình gộp/loại hàng' : '📅 Quay lại Kế hoạch'}
+              {activeTab === 'SCHEDULE' ? 'Cấu hình gộp' : 'Quay lại'}
           </button>
           <button 
             onClick={handleRefresh}
             disabled={syncing}
-            className="px-8 py-4 bg-white text-slate-800 border-2 border-slate-200 rounded-3xl font-bold text-sm hover:border-slate-900 transition-all flex items-center gap-2"
+            className="p-4 bg-white border-2 border-slate-100 text-slate-600 rounded-2xl hover:border-indigo-600 transition-all"
           >
-            {syncing ? "🔄" : "🔄 Làm mới"}
+            <RefreshCcw className={`w-5 h-5 ${syncing ? 'animate-spin' : ''}`} />
           </button>
           <button 
             onClick={handleExportExcel}
-            className="px-8 py-4 bg-emerald-600 text-white rounded-3xl font-bold text-sm hover:bg-emerald-700 transition-all shadow-lg flex items-center gap-2"
+            className="flex items-center gap-2 px-8 py-3 bg-emerald-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 italic"
           >
-            📥 Excel
+            <FileDown className="w-5 h-5" /> Excel Report
           </button>
         </div>
       </div>
 
-      {activeTab === 'CONFIG' ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              <div className="bg-white p-8 rounded-[3rem] shadow-xl border border-slate-200">
-                  <h3 className="text-xl font-black mb-4 uppercase tracking-tighter">📦 Upload Manual Combine</h3>
-                  <p className="text-sm text-slate-500 mb-6">File Excel: Cột 1 = PRO ORDER, Cột 2 = Tên Nhóm Gộp.</p>
-                  <input type="file" onChange={handleManualCombineUpload} className="w-full text-sm file:mr-4 file:py-3 file:px-6 file:rounded-2xl file:border-0 file:bg-indigo-600 file:text-white" />
-              </div>
+      {unknownMolds.length > 0 && activeTab === 'SCHEDULE' && (
+          <div className="bg-amber-50 border border-amber-200 p-6 rounded-[2rem] flex flex-col md:flex-row items-start md:items-center justify-between shadow-sm">
+             <div className="flex items-center gap-4">
+                 <div className="p-3 bg-amber-100 text-amber-600 rounded-2xl">
+                     <AlertTriangle className="w-6 h-6" />
+                 </div>
+                 <div>
+                     <h4 className="text-amber-800 font-black uppercase tracking-tighter text-lg">Phát hiện Mã Khuôn chuyên biệt</h4>
+                     <p className="text-amber-700/80 text-sm font-bold mt-1">Các mã khuôn cần cấu hình Line Rules mới: <span className="font-black text-amber-900 border-b border-amber-900/30">{unknownMolds.join(", ")}</span> (Khác 1k1s, 1k3s, SP, Die-cut, Laminating)</p>
+                 </div>
+             </div>
+             <button onClick={() => setActiveTab('CONFIG')} className="mt-4 md:mt-0 px-6 py-3 bg-amber-600 text-white font-black text-xs uppercase tracking-widest rounded-2xl hover:bg-amber-700 transition-all shadow-lg shadow-amber-200 whitespace-nowrap">Cài đặt Line Rules</button>
           </div>
-      ) : (
-          <>
-            <div className="sticky top-4 z-50 flex flex-nowrap overflow-x-auto gap-2 p-2 bg-slate-200/80 backdrop-blur-md rounded-[2.5rem] border border-slate-200 shadow-lg no-scrollbar">
+      )}
+
+      {activeTab === 'SCHEDULE' && (
+        <>
+            {/* Filter & Search Bar */}
+            <div className="bg-white p-6 rounded-[2.5rem] shadow-lg border border-slate-50 space-y-4">
+                <div className="flex flex-col md:flex-row gap-4 justify-between items-center">
+                    <div className="relative w-full md:w-96">
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                        <input 
+                            type="text" 
+                            placeholder="Tìm kiếm BOM, mã đơn..." 
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="w-full pl-12 pr-6 py-3 bg-slate-50 border-transparent border focus:border-indigo-500 rounded-2xl text-sm font-bold transition-all"
+                        />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        {[
+                            { id: 'urgent', label: 'Hàng Gấp', icon: <AlertCircle className="w-3 h-3"/>, color: 'text-rose-600 bg-rose-50 border-rose-100' },
+                            { id: 'delayed', label: 'Đơn Trễ', icon: <Clock className="w-3 h-3"/>, color: 'text-purple-600 bg-purple-50 border-purple-100' },
+                            { id: 'noLogo', label: 'Chưa Logo', icon: <Package className="w-3 h-3"/>, color: 'text-amber-600 bg-amber-50 border-amber-100' }
+                        ].map(f => (
+                            <button
+                                key={f.id}
+                                onClick={() => setFilters(prev => ({ ...prev, [f.id]: !prev[f.id as keyof typeof prev] }))}
+                                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all border ${filters[f.id as keyof typeof filters] ? f.color : 'bg-white border-slate-100 text-slate-400 hover:border-slate-300'}`}
+                            >
+                                {f.icon} {f.label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            </div>
+
+            {/* Line Selection Tabs */}
+            <div className="flex overflow-x-auto gap-2 p-2 bg-slate-100/50 rounded-3xl no-scrollbar">
                 {data.map((line) => (
-                <button
-                    key={line.id}
-                    onClick={() => { setActiveLineId(line.id); setCurrentPage(1); }}
-                    className={`px-6 md:px-8 py-3 md:py-4 rounded-[2rem] font-bold text-[10px] md:text-sm uppercase tracking-widest transition-all text-nowrap ${
-                    activeLineId === line.id
-                        ? "bg-white text-slate-900 shadow-md"
-                        : "text-slate-500 hover:text-slate-700"
-                    }`}
-                >
-                    Chuyền {line.lineCode}
-                    {(line.confirmed.length + line.predicted.length) > 0 && (
-                    <span className="ml-1 md:ml-2 bg-slate-900 text-white px-2 py-0.5 rounded-full text-[8px] md:text-[10px] font-black">
-                        {line.confirmed.length + line.predicted.length}
-                    </span>
-                    )}
-                </button>
+                    <button
+                        key={line.id}
+                        onClick={() => { setActiveLineId(line.id); setCurrentPage(1); }}
+                        className={`flex items-center gap-3 px-8 py-3 rounded-2xl font-black text-[11px] uppercase tracking-widest transition-all whitespace-nowrap ${
+                        activeLineId === line.id
+                            ? "bg-slate-900 text-white shadow-xl scale-[1.05] z-10"
+                            : "text-slate-400 hover:text-slate-600"
+                        }`}
+                    >
+                        Chuyền {line.lineCode}
+                        <span className={`px-2 py-0.5 rounded-lg text-[9px] ${activeLineId === line.id ? 'bg-white/20' : 'bg-slate-200 text-slate-500'}`}>
+                            {line.confirmed.length + line.predicted.length}
+                        </span>
+                    </button>
                 ))}
             </div>
 
-            {activeLine && (
-                <div className="bg-white rounded-[3rem] shadow-2xl overflow-hidden border border-slate-100">
-                <div className="bg-slate-900 px-6 md:px-12 py-6 md:py-10 text-white flex justify-between items-center">
+            {/* Main Schedule Display */}
+            <div className="bg-white rounded-[3.5rem] shadow-2xl overflow-hidden border border-slate-100">
+                <div className="bg-slate-900 px-12 py-10 text-white flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
                     <div>
-                    <h2 className="text-2xl md:text-4xl font-black tracking-tight uppercase italic">Chuyền {activeLine.lineCode}</h2>
-                    <p className="hidden md:block text-slate-400 text-[10px] font-bold uppercase tracking-[0.3em] mt-2 italic">Dự kiến dựa trên năng lực {activeLine.machineCount} máy</p>
+                        <h2 className="text-3xl md:text-5xl font-black tracking-tighter uppercase font-outfit italic">Chuyền {activeLineRaw?.lineCode}</h2>
+                        <div className="flex items-center gap-4 mt-3">
+                             <div className="flex items-center gap-2 px-4 py-1.5 bg-white/10 rounded-full border border-white/10">
+                                <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">{activeLineRaw?.machineCount} Máy</span>
+                             </div>
+                             <p className="text-slate-500 text-[10px] font-bold uppercase tracking-[0.2em]">Kế hoạch sản xuất dự kiến</p>
+                        </div>
                     </div>
                     <div className="text-right">
-                    <div className="text-[10px] font-bold text-slate-500 uppercase mb-1">Dự kiến</div>
-                    <div className="text-xl md:text-3xl font-black">{totalItems} NHÓM LỆNH</div>
+                        <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Dự thảo hiện tại</div>
+                        <div className="text-3xl font-black font-outfit">
+                            {filteredItems.length} <span className="text-sm text-slate-500">nhóm lệnh</span>
+                        </div>
+                        <div className="text-indigo-400 font-bold text-lg mt-1">
+                            {totalPairs.toLocaleString()} <span className="text-xs uppercase font-black opacity-60 text-slate-500">đôi (PRS)</span>
+                        </div>
                     </div>
                 </div>
 
-                <div className="hidden md:block p-8 overflow-x-auto">
+                <div className="p-8 overflow-x-auto min-h-[400px]">
                     <table className="w-full border-separate border-spacing-y-4">
                     <thead>
-                        <tr className="text-[11px] font-bold text-slate-400 uppercase tracking-widest text-left">
-                        <th className="px-6 py-4">Thứ tự</th>
-                        <th className="px-6 py-4">BOM & Khuôn</th>
-                        <th className="px-6 py-4 min-w-[150px]">Lệnh Sản Xuất (PRO)</th>
-                        <th className="px-6 py-4">Khách hàng / Brand</th>
-                        <th className="px-6 py-4">Số lượng</th>
-                        <th className="px-6 py-4">Hạn hoàn thành</th>
-                        <th className="px-6 py-4 text-right">Lưu ý</th>
+                        <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-left select-none">
+                        <th className="px-6 py-4">STT</th>
+                        <th className="px-6 py-4 cursor-pointer hover:text-indigo-600 transition-colors" onClick={() => setSortConfig({key: 'bom', direction: sortConfig?.key === 'bom' && sortConfig.direction === 'asc' ? 'desc' : 'asc'})}>
+                            BOM & Chi tiết {sortConfig?.key === 'bom' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}
+                        </th>
+                        <th className="px-6 py-4 cursor-pointer hover:text-indigo-600 transition-colors" onClick={() => setSortConfig({key: 'order', direction: sortConfig?.key === 'order' && sortConfig.direction === 'asc' ? 'desc' : 'asc'})}>
+                            Mã đơn (PRO) {sortConfig?.key === 'order' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}
+                        </th>
+                        <th className="px-6 py-4 cursor-pointer hover:text-indigo-600 transition-colors" onClick={() => setSortConfig({key: 'brand', direction: sortConfig?.key === 'brand' && sortConfig.direction === 'asc' ? 'desc' : 'asc'})}>
+                            Khách hàng {sortConfig?.key === 'brand' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}
+                        </th>
+                        <th className="px-6 py-4 cursor-pointer hover:text-indigo-600 transition-colors" onClick={() => setSortConfig({key: 'qty', direction: sortConfig?.key === 'qty' && sortConfig.direction === 'asc' ? 'desc' : 'asc'})}>
+                            Số lượng {sortConfig?.key === 'qty' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}
+                        </th>
+                        <th className="px-6 py-4 cursor-pointer hover:text-indigo-600 transition-colors" onClick={() => setSortConfig({key: 'finish', direction: sortConfig?.key === 'finish' && sortConfig.direction === 'asc' ? 'desc' : 'asc'})}>
+                            Hạn HT {sortConfig?.key === 'finish' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}
+                        </th>
+                        <th className="px-6 py-4 text-right">Trạng thái</th>
                         </tr>
                     </thead>
                     <tbody>
                         {displayed.map((item, idx) => {
-                        const seq = (currentPage - 1) * itemsPerPage + idx + 1;
-                        const label = getLabel(item);
-                        const rowClass = getRowStyle(item);
-                        const logoStatus = item.logoStatus;
-                        const productType = item.productType || "---";
-                        
-                        return (
-                            <tr key={idx} className={`transition-all shadow-sm ${rowClass}`}>
-                            <td className={`px-6 py-6 rounded-l-[2rem] border-l-8 ${rowClass.split(' ').pop()}`}>
-                                <div className="flex items-center gap-3">
-                                <span className={`text-xl font-black opacity-40`}>{seq < 10 ? `0${seq}` : seq}</span>
-                                {label && (
-                                    <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-tighter ${
-                                        label === 'GẤP' ? 'bg-rose-600 text-white' : 
-                                        label === 'TRỄ' ? 'bg-purple-600 text-white' : 'bg-amber-600 text-white'
-                                    }`}>
-                                        {label}
-                                    </span>
-                                )}
-                                </div>
-                            </td>
-                            <td className="px-6 py-6 border-b border-black/5">
-                                <div className={`font-black text-lg text-slate-900`}>#{item.bom}</div>
-                                <div className="text-[10px] uppercase font-bold mt-1 text-slate-500">Khuôn: {item.moldType}</div>
-                                <div className="text-[10px] uppercase font-bold mt-1 text-slate-600">Dao: {item.cuttingDie || "---"}</div>
-                            </td>
-                            <td className="px-6 py-6">
-                                <div className="text-[11px] font-bold whitespace-pre-line leading-tight text-slate-600">
-                                {item.type === 'CONFIRMED' ? item.orderId?.split(',').join('\n') : item.items.map((i: any) => i.id).join('\n')}
-                                </div>
-                            </td>
-                            <td className="px-6 py-6">
-                                <div className="text-xs font-black text-slate-400 tracking-widest uppercase">
-                                    {item.type === 'CONFIRMED' ? item.brand : item.items[0]?.brand}
-                                </div>
-                            </td>
-                            <td className={`px-6 py-6 font-black text-2xl text-slate-700`}>
-                                {item.type === 'CONFIRMED' ? item.qty : item.totalQuantity}
-                            </td>
-                            <td className={`px-6 py-6 font-bold text-sm text-slate-600`}>
-                                {new Date((item.type === 'CONFIRMED' ? (item.estimatedEndTime || 0) : item.minFinishDate)).toLocaleDateString('vi-VN')}
-                            </td>
-                            <td className="px-6 py-6 rounded-r-[2rem] text-right">
-                                <div className="flex flex-col items-end gap-1">
-                                    <div className={`text-[10px] font-bold uppercase tracking-widest text-slate-600`}>
-                                        {item.type === 'CONFIRMED' ? item.status : item.rawStatus}
+                            const seq = (currentPage - 1) * itemsPerPage + idx + 1;
+                            const today = new Date().toISOString().split('T')[0];
+                            const finishDate = item.type === 'CONFIRMED' ? item.estimatedEndTime : (new Date(item.minFinishDate).toISOString().split('T')[0]);
+                            const isDelayed = finishDate && finishDate < today;
+                            const rowClass = getRowStyle(item);
+                            
+                            return (
+                                <tr key={idx} className={`transition-all group border ${rowClass} rounded-3xl shadow-sm`}>
+                                <td className="px-6 py-8 rounded-l-[2.5rem]">
+                                    <div className="flex items-center gap-4">
+                                        <span className="text-xl font-black text-slate-200 group-hover:text-indigo-200 font-outfit">{seq < 10 ? `0${seq}` : seq}</span>
+                                        <div className="flex flex-col gap-1">
+                                            {item.isPriority && <span className="px-2 py-0.5 bg-rose-600 text-white text-[8px] font-black rounded-lg w-fit">GẤP</span>}
+                                            {isDelayed && <span className="px-2 py-0.5 bg-purple-600 text-white text-[8px] font-black rounded-lg w-fit">TRỄ</span>}
+                                        </div>
                                     </div>
-                                    <div className="flex gap-2">
-                                        <span className="text-[9px] font-black px-2 py-0.5 rounded-lg bg-slate-900 text-white">
-                                            {productType}
+                                </td>
+                                <td className="px-6 py-8">
+                                    <div className="font-black text-xl text-slate-900 font-outfit tracking-tighter italic">#{item.bom}</div>
+                                    <div className="flex gap-2 mt-2">
+                                        <span className="text-[9px] font-bold px-2 py-0.5 bg-slate-100 text-slate-500 rounded-md">M: {item.moldType}</span>
+                                        <span className="text-[9px] font-bold px-2 py-0.5 bg-slate-100 text-slate-500 rounded-md">D: {item.cuttingDie || '---'}</span>
+                                    </div>
+                                </td>
+                                <td className="px-6 py-8">
+                                    <div className="text-[10px] font-bold text-slate-500 max-w-[250px] whitespace-pre-line leading-relaxed">
+                                        {item.type === 'CONFIRMED' ? item.orderId?.split(',').join('\n') : item.items.map((i: any) => i.id).join('\n')}
+                                    </div>
+                                </td>
+                                <td className="px-6 py-8">
+                                    <div className="text-[10px] font-black text-slate-400 tracking-widest uppercase italic">
+                                        {item.type === 'CONFIRMED' ? item.brand : item.items[0]?.brand}
+                                    </div>
+                                </td>
+                                <td className="px-6 py-8">
+                                    <div className="text-3xl font-black text-slate-800 font-outfit italic">
+                                        {(item.type === 'CONFIRMED' ? item.qty : item.totalQuantity)?.toLocaleString()}
+                                    </div>
+                                    <p className="text-[8px] font-bold text-slate-400 uppercase mt-1">Sản lượng (PRS)</p>
+                                </td>
+                                <td className="px-6 py-8">
+                                    <div className={`text-sm font-black ${isDelayed ? 'text-rose-500' : 'text-slate-600'}`}>
+                                        {finishDate ? new Date(finishDate).toLocaleDateString('vi-VN') : '---'}
+                                    </div>
+                                    <div className="text-[8px] font-bold text-slate-400 uppercase mt-1">Mục tiêu</div>
+                                </td>
+                                <td className="px-6 py-8 rounded-r-[2.5rem] text-right">
+                                    <div className="flex flex-col items-end gap-2">
+                                        <span className="px-4 py-1 bg-slate-900 text-white text-[9px] font-black rounded-xl italic">
+                                            {item.productType || "SP"}
                                         </span>
-                                        {logoStatus && (
-                                            <div className={`text-[9px] font-black px-2 py-0.5 rounded-lg ${logoStatus === 'Có Logo' ? 'bg-emerald-100 text-emerald-700' : logoStatus === 'Chưa có Logo' ? 'bg-amber-100 text-amber-700 animate-pulse' : 'bg-slate-100 text-slate-500'}`}>
-                                                {logoStatus}
-                                            </div>
-                                        )}
+                                        <div className={`px-3 py-1 rounded-xl text-[9px] font-black ${item.logoStatus === 'Có Logo' ? 'bg-emerald-100 text-emerald-600' : item.logoStatus === 'Chưa có Logo' ? 'bg-rose-100 text-rose-600 animate-pulse' : 'bg-slate-100 text-slate-500'}`}>
+                                            {item.logoStatus || "Chờ Logo"}
+                                        </div>
                                     </div>
-                                </div>
-                            </td>
-                            </tr>
-                        );
+                                </td>
+                                </tr>
+                            );
                         })}
                     </tbody>
                     </table>
                 </div>
 
-                <div className="md:hidden p-4 space-y-4">
-                    {displayed.map((item, idx) => {
-                        const label = getLabel(item);
-                        const rowClass = getRowStyle(item);
-                        const logoStatus = item.logoStatus;
-                        const productType = item.productType || "---";
-                        return (
-                            <div key={idx} className={`p-4 rounded-3xl border-l-[10px] shadow-sm ${rowClass}`}>
-                                <div className="flex justify-between items-start">
-                                    <div>
-                                        <div className="text-[10px] font-black text-slate-400 uppercase">BOM #{item.bom}</div>
-                                        <div className="text-lg font-black text-slate-900">{item.moldType}</div>
-                                    </div>
-                                    {label && <span className={`px-3 py-1 rounded-full text-[9px] font-bold uppercase ${
-                                        label === 'GẤP' ? 'bg-rose-600 text-white' : 
-                                        label === 'TRỄ' ? 'bg-purple-600 text-white' : 'bg-amber-600 text-white'
-                                    }`}>{label}</span>}
-                                </div>
-                                <div className="mt-2 text-[10px] text-slate-600 break-all bg-white/50 p-2 rounded-xl">
-                                    {item.type === 'CONFIRMED' ? item.orderId : item.items.map((i: any) => i.id).join(', ')}
-                                </div>
-                                <div className="mt-3 flex justify-between items-end">
-                                    <div>
-                                        <div className="text-[10px] font-bold text-slate-400 uppercase">Hạn trả: {new Date((item.type === 'CONFIRMED' ? (item.estimatedEndTime || 0) : item.minFinishDate)).toLocaleDateString('vi-VN')}</div>
-                                        <div className="text-xl font-black text-slate-700">{(item.type === 'CONFIRMED' ? item.qty : item.totalQuantity)} PRS</div>
-                                    </div>
-                                    <div className="flex flex-col items-end gap-1">
-                                        <span className="text-[9px] font-black px-2 py-0.5 rounded-lg bg-slate-900 text-white w-fit">
-                                            {productType}
-                                        </span>
-                                        {logoStatus && (
-                                            <div className={`text-[9px] font-black px-2 py-1 rounded-lg ${logoStatus === 'Có Logo' ? 'bg-emerald-100 text-emerald-700' : logoStatus === 'Chưa có Logo' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
-                                                {logoStatus}
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
-
                 {totalPages > 1 && (
-                <div className="flex justify-center items-center gap-4 py-8">
-                    <button 
-                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                    className="px-6 py-3 rounded-2xl border border-slate-200 font-bold text-slate-400 text-xs text-nowrap"
-                    >
-                    &larr; TRƯỚC
-                    </button>
-                    <span className="font-bold text-[10px] uppercase text-slate-500 text-nowrap">
-                        {currentPage} / {totalPages}
-                    </span>
-                    <button 
-                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                    className="px-6 py-3 rounded-2xl border border-slate-200 font-bold text-slate-400 text-xs text-nowrap"
-                    >
-                    SAU &rarr;
-                    </button>
-                </div>
+                    <div className="flex justify-center items-center gap-6 py-12 bg-slate-50/50">
+                        <button 
+                            disabled={currentPage === 1}
+                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                            className="p-4 bg-white border border-slate-200 rounded-2xl disabled:opacity-30 hover:shadow-lg transition-all"
+                        >
+                            <svg className="w-5 h-5 rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 5l7 7-7 7" strokeWidth="3"/></svg>
+                        </button>
+                        <span className="text-sm font-black uppercase tracking-widest text-slate-400">Trang {currentPage} / {totalPages}</span>
+                        <button 
+                            disabled={currentPage === totalPages}
+                            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                            className="p-4 bg-white border border-slate-200 rounded-2xl disabled:opacity-30 hover:shadow-lg transition-all"
+                        >
+                            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 5l7 7-7 7" strokeWidth="3"/></svg>
+                        </button>
+                    </div>
                 )}
+            </div>
+        </>
+      )}
+
+      {activeTab === 'CONFIG' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="bg-white p-10 rounded-[3rem] shadow-xl border border-slate-200">
+                <div className="flex items-center gap-4 mb-8">
+                    <div className="p-3 bg-indigo-100 text-indigo-600 rounded-2xl">
+                        <Layers className="w-6 h-6" />
+                    </div>
+                    <h3 className="text-xl font-black uppercase tracking-tighter">Upload Manual Combine</h3>
                 </div>
-            )}
-          </>
+                <p className="text-xs text-slate-500 mb-8 leading-relaxed font-bold">
+                    Tải lên danh sách các đơn hàng cần gộp chung với nhau. <br/>
+                    Cấu trúc file: Cột A (Mã đơn LSX), Cột B (Tên nhóm gộp).
+                </p>
+                <div className="space-y-4">
+                    <input 
+                        type="file" 
+                        onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            setLoading(true);
+                            try {
+                                const { read, utils } = await import("xlsx");
+                                const ab = await file.arrayBuffer();
+                                const wb = read(ab);
+                                const rows: any[] = utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+                                const dataRows = rows.slice(1).filter(r => r[0] && r[1]);
+                                const resp = await fetch("/api/manual-combine", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ combines: dataRows.map(r => ({ orderId: String(r[0]).trim(), combineName: String(r[1]).trim() })) })
+                                });
+                                if (resp.ok) window.location.reload();
+                            } catch (e) { alert("Lỗi tải file"); } finally { setLoading(false); }
+                        }} 
+                        className="w-full text-xs file:mr-6 file:py-4 file:px-8 file:rounded-2xl file:border-0 file:bg-slate-900 file:text-white file:font-black hover:file:bg-black cursor-pointer" 
+                    />
+                    {loading && <div className="text-[10px] font-black text-indigo-600 animate-pulse">ĐANG XỬ LÝ DỮ LIỆU...</div>}
+                </div>
+            </div>
+        </div>
       )}
     </div>
   );

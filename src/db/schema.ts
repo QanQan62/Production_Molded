@@ -22,6 +22,8 @@ export const orders = sqliteTable('orders', {
   logoStatus: text('logo_status'),
   descriptionPU1: text('description_pu1'),
   descriptionFB: text('description_fb'),
+  manualCombineId: text('manual_combine_id'),
+  hasLogo: integer('has_logo', { mode: 'boolean' }).default(false),
 });
 
 export const lineRules = sqliteTable('line_rules', {

@@ -35,70 +35,72 @@ function parseExcelDate(dateStr: any) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-export function groupBOMs(allOrders: Order[], manualCombines: { orderId: string, combineName: string }[] = []) {
+export function groupBOMs(allOrders: Order[], manualCombines: { orderId: string, combineName: string }[] = [], mode: 'AUTO' | 'MANUAL' = 'AUTO') {
     const manualMap = new Map(manualCombines.map(c => [c.orderId, c.combineName]));
     
-    const manualGroupItems: Record<string, Order[]> = {};
-    const regularOrders: Order[] = [];
+    // MODE 2: Manual Mapping Only
+    if (mode === 'MANUAL') {
+        const manualGroups: Record<string, Order[]> = {};
+        const standalone: any[] = [];
 
-    allOrders.forEach(o => {
-        const cName = manualMap.get(o.id);
-        if (cName) {
-            if (!manualGroupItems[cName]) manualGroupItems[cName] = [];
-            manualGroupItems[cName].push(o);
-        } else {
-            regularOrders.push(o);
-        }
-    });
-
-    const moldingOutOrders = regularOrders.filter(o => o.moldOutDate && o.bom);
-    const moldingInOrders = regularOrders.filter(o => !o.moldOutDate && o.moldInDate && o.bom);
-
-    const groupListByDateRule = (orders: Order[]) => {
-        const initialGroups: Record<string, Order[]> = {};
-        orders.forEach(order => {
-          // Bổ sung logoStatus vào key để tách nhóm nếu Logo status khác nhau
-          const logoKey = order.logoStatus || "Không in";
-          const key = `${order.bom}_${order.status}_${logoKey}`;
-          if (!initialGroups[key]) initialGroups[key] = [];
-          initialGroups[key].push(order);
-        });
-
-        const finalSubGroups: any[] = [];
-        Object.values(initialGroups).forEach(group => {
-          const sorted = [...group].sort((a, b) => new Date(a.moldInDate!).getTime() - new Date(b.moldInDate!).getTime());
-          
-          let currentSub: Order[] = [];
-          let minDate: number | null = null;
-
-          sorted.forEach(order => {
-            const orderDate = new Date(order.moldInDate!).getTime();
-            const fourDaysInMs = 4 * 24 * 60 * 60 * 1000;
-
-            if (minDate === null || orderDate - minDate > fourDaysInMs) {
-              if (currentSub.length > 0) finalSubGroups.push(createGroupMetaData(currentSub));
-              currentSub = [order];
-              minDate = orderDate;
+        allOrders.forEach(o => {
+            const manualName = manualMap.get(o.id);
+            if (manualName) {
+                if (!manualGroups[manualName]) manualGroups[manualName] = [];
+                manualGroups[manualName].push(o);
             } else {
-              currentSub.push(order);
+                standalone.push({ ...createGroupMetaData([o]), id: `SOLE_${o.id}` });
             }
-          });
-          if (currentSub.length > 0) finalSubGroups.push(createGroupMetaData(currentSub));
         });
-        return finalSubGroups.sort((a, b) => a.avgFinishDate - b.avgFinishDate);
+
+        const groupedManual = Object.keys(manualGroups).map(name => ({
+            ...createGroupMetaData(manualGroups[name]),
+            id: `MANUAL_${name}`,
+            isManual: true
+        }));
+
+        return [...groupedManual, ...standalone].sort((a, b) => a.minFinishDate - b.minFinishDate);
+    }
+
+    // MODE 1: Auto Rule-based Grouping (Standard)
+    const moldingOutOrders = allOrders.filter(o => o.moldOutDate && o.bom);
+    const moldingInOrders = allOrders.filter(o => !o.moldOutDate && o.moldInDate && o.bom);
+    const others = allOrders.filter(o => !o.bom || (!o.moldOutDate && !o.moldInDate));
+
+    const applyStandardRule = (list: Order[]) => {
+        const byKey: Record<string, Order[]> = {};
+        list.forEach(o => {
+            const key = `${o.bom}_${o.logoStatus || 'NO'}`;
+            if (!byKey[key]) byKey[key] = [];
+            byKey[key].push(o);
+        });
+
+        const final: any[] = [];
+        Object.values(byKey).forEach(grp => {
+            const sorted = grp.sort((a,b) => (parseExcelDate(a.moldInDate)?.getTime() || 0) - (parseExcelDate(b.moldInDate)?.getTime() || 0));
+            let sub: Order[] = [];
+            let minD: number | null = null;
+
+            sorted.forEach(order => {
+                const curD = parseExcelDate(order.moldInDate)?.getTime() || 0;
+                if (minD === null || curD - minD > (4 * 24 * 60 * 60 * 1000)) {
+                    if (sub.length > 0) final.push(createGroupMetaData(sub));
+                    sub = [order];
+                    minD = curD;
+                } else {
+                    sub.push(order);
+                }
+            });
+            if (sub.length > 0) final.push(createGroupMetaData(sub));
+        });
+        return final;
     };
 
-    const moldingOutGroups = groupListByDateRule(moldingOutOrders).map(g => ({ ...g, type: 'OUT' }));
-    const moldingInGroups = groupListByDateRule(moldingInOrders).map(g => ({ ...g, type: 'IN' }));
+    const outResults = applyStandardRule(moldingOutOrders);
+    const inResults = applyStandardRule(moldingInOrders);
+    const otherResults = others.map(o => ({ ...createGroupMetaData([o]), id: `OTHER_${o.id}` }));
 
-    const manualFinalGroups = Object.keys(manualGroupItems).map(cName => {
-        const items = manualGroupItems[cName];
-        const g = createGroupMetaData(items);
-        return { ...g, id: `MANUAL_${cName}`, isManual: true };
-    });
-
-    // Trả về Manual trước, xong đến Out, xong đến In
-    return [...manualFinalGroups, ...moldingOutGroups, ...moldingInGroups];
+    return [...outResults, ...inResults, ...otherResults].sort((a, b) => a.minFinishDate - b.minFinishDate);
 }
 
 function createGroupMetaData(items: Order[]) {

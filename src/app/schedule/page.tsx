@@ -53,7 +53,7 @@ export default async function SchedulePage() {
     };
   });
 
-  const readyGroups = groupBOMs(readyOrders, manualCombinesData);
+  const readyGroups = groupBOMs(readyOrders as any, manualCombinesData);
 
   // Sắp xếp readyGroups: Hàng gấp lên đầu
   readyGroups.sort((a, b) => {
@@ -154,7 +154,12 @@ export default async function SchedulePage() {
         <p className="text-slate-500 font-bold mt-2 uppercase tracking-[0.5em] text-[10px] bg-slate-200 inline-block px-3 py-1 rounded-full">Tomorrow Planning Overview</p>
       </header>
 
-      <ScheduleClient data={scheduleByLine as any} rawData={readyOrders} />
+      <ScheduleClient 
+        data={scheduleByLine as any} 
+        rawData={readyOrders} 
+        manualCombines={manualCombinesData} 
+        knownMolds={validTargets.map((t: any) => t.moldType)} 
+      />
     </div>
   );
 }
