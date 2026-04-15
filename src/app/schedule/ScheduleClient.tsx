@@ -225,8 +225,8 @@ export default function ScheduleClient({
 
     clientData.forEach(line => {
         const lineItems = [
-            ...line.confirmed.map(c => ({ ...c, type: 'CONFIRMED' })),
-            ...line.predicted.map(p => ({ ...p, type: 'PREDICTED' }))
+            ...line.confirmed.map((c: any) => ({ ...c, type: 'CONFIRMED' })),
+            ...line.predicted.map((p: any) => ({ ...p, type: 'PREDICTED' }))
         ];
 
         lineItems.forEach((o: any) => {
