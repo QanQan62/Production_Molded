@@ -116,11 +116,18 @@ export default function MonitorClient({ initialLines, rawData }: { initialLines:
 
             allExportData.push({
                 "Line": lineInfo.line.lineCode,
-                "Order": j.order.id,
+                "Pro order": j.order.id,
+                "brand": j.order.brand || "",
+                "article": j.order.articleCode || "",
+                "qty": j.order.quantity,
                 "BOM": j.order.bom,
-                "Qty": j.order.quantity,
-                "Finish": j.order.finishDate,
-                "Status": j.order.logoStatus,
+                "Moldtype": j.order.moldType,
+                "#Last": j.order.cuttingDie || "",
+                "Pu description": j.order.descriptionPU1 || "",
+                "FB description": j.order.descriptionFB || "",
+                "code logo1": j.order.codeLogo1 || "",
+                "finish date": j.order.finishDate || "",
+                "Leanline In": j.order.leanlineInDate || "",
                 "Note": note
             });
         });
@@ -128,7 +135,7 @@ export default function MonitorClient({ initialLines, rawData }: { initialLines:
     
     const ws = utils.json_to_sheet(allExportData);
     const wb = utils.book_new();
-    utils.book_append_sheet(wb, ws, "All_Lines_Monitor");
+    utils.book_append_sheet(wb, ws, "Monitor");
     writeFile(wb, `Monitor_All_Lines_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 

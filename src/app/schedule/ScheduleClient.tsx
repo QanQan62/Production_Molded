@@ -223,44 +223,72 @@ export default function ScheduleClient({
     const allExportData: any[] = [];
     const today = new Date().toISOString().split('T')[0];
 
-    clientData.forEach(line => {
-        const lineItems = [
-            ...line.confirmed.map((c: any) => ({ ...c, type: 'CONFIRMED' })),
-            ...line.predicted.map((p: any) => ({ ...p, type: 'PREDICTED' }))
-        ];
-
-        lineItems.forEach((o: any) => {
-            const ids = o.type === 'CONFIRMED' ? o.orderId : o.items.map((i: any) => i.id).join(', ');
-            const qty = o.type === 'CONFIRMED' ? o.qty : o.totalQuantity;
-            const finish = o.type === 'CONFIRMED' ? o.estimatedEndTime : new Date(o.minFinishDate).toLocaleDateString('vi-VN');
-            
-            const isPriority = o.type === 'CONFIRMED' ? o.isPriority : o.items.some((i: any) => i.isPriority);
-            const rawFinishDate = o.type === 'CONFIRMED' ? o.estimatedEndTime : (new Date(o.minFinishDate).toISOString().split('T')[0]);
-            const isDelayed = rawFinishDate && rawFinishDate < today;
-            
+    clientData.forEach((line: any) => {
+        // Confirmed jobs - each is an individual order
+        line.confirmed.forEach((j: any) => {
+            const isPriority = j.isPriority;
+            const isDelayed = j.estimatedEndTime && j.estimatedEndTime < today;
             let note = "Bình thường";
             if (isPriority) note = "GẤP";
             else if (isDelayed) note = "Trễ";
-            else if (o.logoStatus === "Chưa có Logo") note = "Chưa có Logo";
+            else if (j.logoStatus === "Chưa có Logo") note = "Chưa có Logo";
 
             allExportData.push({
-                "Line": line.lineCode,
-                "BOM": o.bom,
-                "Moldtype": o.moldType,
-                "Orders": ids,
-                "Qty": qty,
-                "Finish date": finish,
-                "Status": o.type === 'CONFIRMED' ? o.status : o.rawStatus,
-                "Type": o.productType || "---",
+                "Line sắp vào": line.lineCode,
+                "Pro order": j.orderId,
+                "brand": j.brand || "",
+                "article": j.articleCode || "",
+                "Qty": j.qty,
+                "BOM": j.bom,
+                "Moldtype": j.moldType,
+                "ProductType": j.productType || "",
+                "#Last": j.cuttingDie || "",
+                "PU description": j.descriptionPU1 || "",
+                "FB description": j.descriptionFB || "",
+                "code Logo1": j.codeLogo1 || "",
+                "Finish date": j.estimatedEndTime || "",
+                "Status": j.rawStatus || j.status || "",
                 "Note": note
+            });
+        });
+
+        // Predicted groups - expand each group into individual orders
+        line.predicted.forEach((g: any) => {
+            if (!g.items) return;
+            g.items.forEach((item: any) => {
+                const isPriority = item.isPriority;
+                const finishDate = item.finishDate || "";
+                const isDelayed = finishDate && finishDate < today;
+                let note = "Bình thường";
+                if (isPriority) note = "GẤP";
+                else if (isDelayed) note = "Trễ";
+                else if (item.logoStatus === "Chưa có Logo") note = "Chưa có Logo";
+
+                allExportData.push({
+                    "Line sắp vào": line.lineCode,
+                    "Pro order": item.id,
+                    "brand": item.brand || "",
+                    "article": item.articleCode || "",
+                    "Qty": item.quantity,
+                    "BOM": item.bom || g.bom,
+                    "Moldtype": item.moldType || g.moldType,
+                    "ProductType": item.productType || "",
+                    "#Last": item.cuttingDie || "",
+                    "PU description": item.descriptionPU1 || "",
+                    "FB description": item.descriptionFB || "",
+                    "code Logo1": item.codeLogo1 || "",
+                    "Finish date": item.finishDate || "",
+                    "Status": item.rawStatus || "",
+                    "Note": note
+                });
             });
         });
     });
 
     const ws = utils.json_to_sheet(allExportData);
     const wb = utils.book_new();
-    utils.book_append_sheet(wb, ws, "Full_Schedule");
-    writeFile(wb, `Schedule_Report_All_Lines_${new Date().toISOString().split('T')[0]}.xlsx`);
+    utils.book_append_sheet(wb, ws, "Schedule");
+    writeFile(wb, `Schedule_All_Lines_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const getRowStyle = (item: any) => {
@@ -540,6 +568,9 @@ export default function ScheduleClient({
                                         )}
                                         <div className={`px-3 py-1 rounded-xl text-[9px] font-black ${item.logoStatus === 'Có Logo' ? 'bg-emerald-100 text-emerald-600' : item.logoStatus === 'Chưa có Logo' ? 'bg-rose-100 text-rose-600 animate-pulse' : 'bg-slate-100 text-slate-500'}`}>
                                             {item.logoStatus || "Chờ Logo"}
+                                        </div>
+                                        <div className="text-[8px] font-bold text-slate-400 mt-1 uppercase max-w-[120px] text-right truncate" title={item.rawStatus}>
+                                            {item.rawStatus || "---"}
                                         </div>
                                     </div>
                                 </td>

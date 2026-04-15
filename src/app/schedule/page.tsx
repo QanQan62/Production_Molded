@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { orders, lines, productionJobs, lineConfigs, moldTargets, lineRules as lineRulesSchema, priorityOrders as priorityOrdersSchema, systemConfig, manualCombines } from "@/db/schema";
-import { eq, and, sql, asc, inArray, desc } from "drizzle-orm";
+import { eq, and, or, like, sql, asc, inArray, desc } from "drizzle-orm";
 import { groupBOMs } from "@/lib/productionLogic";
 import { autoSuggest } from "@/lib/autoRouter";
 import ScheduleClient from "./ScheduleClient";
@@ -41,12 +41,30 @@ export default async function SchedulePage() {
   const priorityOrders = await db.select().from(priorityOrdersSchema);
   const manualCombinesData = await db.select().from(manualCombines) as any[];
   
-  const readyOrdersRaw = await db.select().from(orders).where(sql`${orders.rawStatus} IN (
-    '4.READY FOR MOLDING', 
-    '4.1.READY FOR MOLDING(S)',
-    '5.WIP IN MOLDING', 
-    '5.1.WIP SAU MOLDING'
-  )`);
+  const priorityIds = priorityOrders.map(p => p.orderId?.trim()).filter(Boolean);
+
+  const readyOrdersRaw = await db.select().from(orders).where(
+    or(
+      inArray(orders.rawStatus, [
+        '4.READY FOR MOLDING', 
+        '4.1.READY FOR MOLDING(S)',
+        '5.WIP IN MOLDING', 
+        '5.1.WIP SAU MOLDING'
+      ]),
+      priorityIds.length > 0 
+        ? and(
+            inArray(orders.id, priorityIds as string[]),
+            or(
+              like(orders.rawStatus, '1.%'),
+              like(orders.rawStatus, '2.%'),
+              like(orders.rawStatus, '3.%'),
+              like(orders.rawStatus, '4.%'),
+              like(orders.rawStatus, '5.%')
+            )
+          )
+        : sql`FALSE`
+    )
+  );
 
   const readyOrders = readyOrdersRaw.map((o: any) => {
     const orderIdTrimmed = String(o.id || "").trim();
@@ -71,7 +89,7 @@ export default async function SchedulePage() {
 
   const machineConfigs = allLines.map((l: any) => ({
     ...l,
-    machineCount: configs.find(c => c.lineId === l.id)?.machineCount || 8
+    machineCount: configs.find(c => c.lineId === l.id)?.machineCount || (['H1', 'H2'].includes(l.lineCode.toUpperCase()) ? 4 : 8)
   }));
   const validTargets = targets.map((t: any) => ({ moldType: t.moldType, targetPerHour: t.targetPerHour || 0 }));
   
@@ -122,7 +140,7 @@ export default async function SchedulePage() {
 
     const predictedGroups = readyGroups.filter(g => draftAssignments[g.id]?.lineId === line.id);
     const lineConfig = configs.find(c => c.lineId === line.id);
-    const machineCount = lineConfig?.machineCount || 8;
+    const machineCount = lineConfig?.machineCount || (['H1', 'H2'].includes(line.lineCode.toUpperCase()) ? 4 : 8);
     
     return {
       id: line.id,
