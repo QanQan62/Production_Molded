@@ -36,36 +36,42 @@ function parseExcelDate(dateStr: any) {
 }
 
 export function groupBOMs(allOrders: Order[], manualCombines: { orderId: string, combineName: string }[] = [], mode: 'AUTO' | 'MANUAL' = 'AUTO') {
-    const manualMap = new Map(manualCombines.map(c => [c.orderId, c.combineName]));
+    const manualMap = new Map(manualCombines.map(c => [String(c.orderId).trim(), String(c.combineName).trim()]));
     
-    // MODE 2: Manual Mapping Only
+    // --- STEP 1: Process Manual Groups ---
+    const manualGroups: Record<string, Order[]> = {};
+    const remainingOrders: Order[] = [];
+
+    allOrders.forEach(o => {
+        const manualName = manualMap.get(String(o.id).trim());
+        if (manualName) {
+            if (!manualGroups[manualName]) manualGroups[manualName] = [];
+            manualGroups[manualName].push(o);
+        } else {
+            remainingOrders.push(o);
+        }
+    });
+
+    const manualResult = Object.keys(manualGroups).map(name => ({
+        ...createGroupMetaData(manualGroups[name]),
+        id: `MANUAL_${name}`,
+        bom: `COMBINE: ${name}`,
+        isManual: true
+    }));
+
     if (mode === 'MANUAL') {
-        const manualGroups: Record<string, Order[]> = {};
-        const standalone: any[] = [];
-
-        allOrders.forEach(o => {
-            const manualName = manualMap.get(o.id);
-            if (manualName) {
-                if (!manualGroups[manualName]) manualGroups[manualName] = [];
-                manualGroups[manualName].push(o);
-            } else {
-                standalone.push({ ...createGroupMetaData([o]), id: `SOLE_${o.id}` });
-            }
-        });
-
-        const groupedManual = Object.keys(manualGroups).map(name => ({
-            ...createGroupMetaData(manualGroups[name]),
-            id: `MANUAL_${name}`,
-            isManual: true
+        // In strictly manual mode, remaining ones are standalone
+        const standaloneResult = remainingOrders.map(o => ({ 
+            ...createGroupMetaData([o]), 
+            id: `SOLE_${o.id}` 
         }));
-
-        return [...groupedManual, ...standalone].sort((a, b) => a.minFinishDate - b.minFinishDate);
+        return [...manualResult, ...standaloneResult].sort((a, b) => a.minFinishDate - b.minFinishDate);
     }
 
-    // MODE 1: Auto Rule-based Grouping (Standard)
-    const moldingOutOrders = allOrders.filter(o => o.moldOutDate && o.bom);
-    const moldingInOrders = allOrders.filter(o => !o.moldOutDate && o.moldInDate && o.bom);
-    const others = allOrders.filter(o => !o.bom || (!o.moldOutDate && !o.moldInDate));
+    // --- STEP 2: Process Auto Groups for the rest ---
+    const moldingOutOrders = remainingOrders.filter(o => o.moldOutDate && o.bom);
+    const moldingInOrders = remainingOrders.filter(o => !o.moldOutDate && o.moldInDate && o.bom);
+    const others = remainingOrders.filter(o => !o.bom || (!o.moldOutDate && !o.moldInDate));
 
     const applyStandardRule = (list: Order[]) => {
         const byKey: Record<string, Order[]> = {};
@@ -96,11 +102,10 @@ export function groupBOMs(allOrders: Order[], manualCombines: { orderId: string,
         return final;
     };
 
-    const outResults = applyStandardRule(moldingOutOrders);
-    const inResults = applyStandardRule(moldingInOrders);
+    const autoResults = [...applyStandardRule(moldingOutOrders), ...applyStandardRule(moldingInOrders)];
     const otherResults = others.map(o => ({ ...createGroupMetaData([o]), id: `OTHER_${o.id}` }));
 
-    return [...outResults, ...inResults, ...otherResults].sort((a, b) => a.minFinishDate - b.minFinishDate);
+    return [...manualResult, ...autoResults, ...otherResults].sort((a, b) => a.minFinishDate - b.minFinishDate);
 }
 
 function createGroupMetaData(items: Order[]) {
@@ -122,7 +127,14 @@ function createGroupMetaData(items: Order[]) {
     totalQuantity: items.reduce((sum, i) => sum + (i.quantity || 0), 0),
     avgFinishDate,
     minFinishDate,
-    type
+    type,
+    // Add missing UI fields
+    cuttingDie: items[0].cuttingDie || "",
+    rawStatus: items[0].rawStatus || "",
+    logoStatus: items[0].logoStatus || undefined,
+    descriptionPU1: items[0].descriptionPU1 || "",
+    descriptionFB: items[0].descriptionFB || "",
+    productType: items[0].productType || ""
   };
 }
 

@@ -158,7 +158,10 @@ export default async function SchedulePage() {
         data={scheduleByLine as any} 
         rawData={readyOrders} 
         manualCombines={manualCombinesData} 
-        knownMolds={validTargets.map((t: any) => t.moldType)} 
+        knownMolds={validTargets.map((t: any) => t.moldType)}
+        allLines={machineConfigs}
+        lineRules={rules}
+        moldTargets={validTargets}
       />
     </div>
   );

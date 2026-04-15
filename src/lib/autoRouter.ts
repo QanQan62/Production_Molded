@@ -20,13 +20,25 @@ export function autoSuggest(
   lineRules: any[] = []
 ) {
   const assignments: Record<string, { lineId: string; targetPerHour: number; suggestion: string, isUrgent: boolean }> = {};
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
   const lineLoads: Record<string, number> = {};
   lines.forEach(l => { lineLoads[l.id] = 0; });
 
+  const rulesByLine: Record<string, any[]> = {};
+  lineRules.forEach(r => {
+      if (!rulesByLine[r.lineId]) rulesByLine[r.lineId] = [];
+      rulesByLine[r.lineId].push(r);
+  });
+
+  const m5RuleIsStrict = lineRules.some(r => {
+      const line = lines.find(l => l.id === r.lineId);
+      return line?.lineCode === 'M5' && r.ruleType === 'PRODUCT_TYPE' && r.ruleValue.toUpperCase() === '1K3S';
+  });
+
+  const initialAssignments: Record<string, any[]> = {};
+  lines.forEach(l => { initialAssignments[l.id] = []; });
+  const unmatchedPool: BomGroup[] = [];
+
+  // --- PASS 1: Khớp Rule Chính Xác ---
   bomGroups.forEach(group => {
     const firstItem = group.items[0];
     const brand = (firstItem.brand || "").toUpperCase();
@@ -35,34 +47,18 @@ export function autoSuggest(
     const productType = (firstItem.productType || "").toUpperCase();
     const thangHoa = (firstItem.thangHoa || "").trim() !== "" ? "CÓ" : "KHÔNG";
     const totalQty = group.totalQuantity;
-    const target = moldTargets.find(t => t.moldType === group.moldType)?.targetPerHour || 0;
 
-    const isUrgent = group.items.some((i: any) => i.isPriority);
+    let matchedLines: Line[] = [];
 
-    // 1. Nhóm rule theo từng chuyền
-    const rulesByLine: Record<string, any[]> = {};
-    lineRules.forEach(r => {
-        if (!rulesByLine[r.lineId]) rulesByLine[r.lineId] = [];
-        rulesByLine[r.lineId].push(r);
-    });
-
-    let candidates: Line[] = [];
-
-    // 2. Đánh giá xem order này có khớp hoàn toàn với cấu hình của chuyền nào không
     Object.keys(rulesByLine).forEach(lineId => {
         const rulesForThisLine = rulesByLine[lineId];
-        
-        // Nhóm các rule của chuyền này theo loại (RuleType)
         const rulesByType: Record<string, any[]> = {};
         rulesForThisLine.forEach(r => {
             if (!rulesByType[r.ruleType]) rulesByType[r.ruleType] = [];
             rulesByType[r.ruleType].push(r);
         });
 
-        // Chuyền hợp lệ nếu order khớp với TẤT CẢ các loại rule (AND logic).
-        // Trong cùng 1 loại rule, chỉ cần khớp 1 giá trị là được (OR logic).
-        let isStrictMatchForLine = true;
-
+        let isStrictMatch = true;
         for (const ruleType in rulesByType) {
             const rules = rulesByType[ruleType];
             const isMatchForThisType = rules.some(r => {
@@ -76,99 +72,144 @@ export function autoSuggest(
                 if (r.ruleType === 'TOTAL_QTY_LT') return totalQty < Number(val);
                 if (r.ruleType === 'TOTAL_QTY_RANGE') {
                     const parts = val.split('-');
-                    if (parts.length === 2) {
-                        return totalQty >= Number(parts[0]) && totalQty <= Number(parts[1]);
-                    }
+                    if (parts.length === 2) return totalQty >= Number(parts[0]) && totalQty <= Number(parts[1]);
                 }
                 return false;
             });
-            
-            if (!isMatchForThisType) {
-                isStrictMatchForLine = false;
-                break;
-            }
+            if (!isMatchForThisType) { isStrictMatch = false; break; }
         }
-
-        if (isStrictMatchForLine) {
-            const lineObj = lines.find(l => l.id === lineId);
-            if (lineObj) candidates.push(lineObj);
+        if (isStrictMatch) {
+            const l = lines.find(ln => ln.id === lineId);
+            if (l) matchedLines.push(l);
         }
     });
 
-    // Đặc biệt: M5 chỉ cho 1k3s nếu lineRules có rule cho M5 là 1k3s
-    const m5RuleIsStrict = lineRules.some(r => {
-        const line = lines.find(l => l.id === r.lineId);
-        return line?.lineCode === 'M5' && r.ruleType === 'PRODUCT_TYPE' && r.ruleValue.toUpperCase() === '1K3S';
-    });
-
-    // 3. Chọn chuyền có Load ít nhất trong danh sách candidates
-    let selectedLine = candidates.sort((a, b) => lineLoads[a.id] - lineLoads[b.id])[0];
-    
-    // ĐẶC BIỆT: CƠ CHẾ TRÀN (SPILLOVER CACHING)
-    // Nếu chuyền chỉ định đã đầy (quá 12 tiếng) HOẶC không có chuyền nào khớp rule
-    // Hệ thống sẽ chủ động tìm các chuyền khác (H1, M5, v.v.) đang rảnh rỗi để gánh bớt tải.
-    const MAX_LOAD_LIMIT = 12; // Giới hạn ~50k đôi / ngày tương ứng ~12 tiếng chạy
-    
-    if (!selectedLine || lineLoads[selectedLine.id] >= MAX_LOAD_LIMIT) {
-        // Tìm các chuyền còn dư dưới năng lực MAX_LOAD_LIMIT
-        let spilloverCandidates = lines.filter(l => {
-            if (selectedLine && l.id === selectedLine.id) return false; // Không lấy lại chuyền đang đầy
-            
-            // Xử lý ràng buộc vật lý cứng:
-            // 1. Máy Thăng Hoa: Hàng Thăng Hoa "CÓ" bắt buộc phải vào line có hỗ trợ Thăng Hoa
-            if (thangHoa === 'CÓ') {
-                const lineRulesForThangHoa = rulesByLine[l.id]?.filter(r => r.ruleType === 'THANG_HOA') || [];
-                const canDoThangHoa = lineRulesForThangHoa.some(r => r.ruleValue.toUpperCase() === 'CÓ');
-                // Nếu line chưa cấu hình rule Thăng Hoa, hoặc cấu hình Không -> Bỏ qua
-                if (!canDoThangHoa && l.lineCode !== 'H1') return false; 
-            }
-            
-            // 2. Chuyền M5 nếu đang khóa gắt 1K3S thì chỉ nhận 1k3s
-            if (l.lineCode === 'M5' && m5RuleIsStrict && productType !== '1K3S') return false;
-
-            return true;
-        });
-
-        // Chỉ ưu tiên những chuyền thật sự rảnh (Load < Load Limit)
-        const freeSpillCands = spilloverCandidates.filter(l => lineLoads[l.id] < MAX_LOAD_LIMIT);
-        
-        if (freeSpillCands.length > 0) {
-            // Lấy chuyền rảnh nhất
-            const bestSpill = freeSpillCands.sort((a, b) => lineLoads[a.id] - lineLoads[b.id])[0];
-            // Cập nhật selectedLine thành chuyền tràn
-            selectedLine = bestSpill;
-        } else if (!selectedLine) {
-            // Nếu không có chuyền tràn nào rảnh < 12h vả cũng ko có selectedLine -> Lấy bừa chuyền ít tải nhất
-            selectedLine = lines.sort((a, b) => lineLoads[a.id] - lineLoads[b.id])[0];
-        }
-    }
-    
-    // Đảm bảo không undefined
-    if (!selectedLine) selectedLine = lines[0];
-
-    if (selectedLine && target > 0) {
-      // Điều chỉnh cứng cấu hình máy cho H1 và H2 (4 máy chặt), các chuyền còn lại (8 máy) nếu chưa có trong DB
-      const defaultMachines = ['H1', 'H2'].includes(selectedLine.lineCode) ? 4 : 8;
-      const machineCount = selectedLine.machineCount || defaultMachines;
-      
-      const prodTime = calculateProductionTime(group.totalQuantity, target, machineCount);
-      
-      assignments[group.id] = {
-        lineId: selectedLine.id,
-        targetPerHour: target,
-        suggestion: prodTime.suggestion,
-        isUrgent
-      };
-
-      lineLoads[selectedLine.id] += prodTime.totalHours;
+    if (matchedLines.length > 0) {
+        // Tạm thời chọn chuyền đầu tiên khớp rule
+        initialAssignments[matchedLines[0].id].push(group);
     } else {
-      assignments[group.id] = {
-        lineId: "",
-        targetPerHour: target,
-        suggestion: "",
-        isUrgent
-      };
+        unmatchedPool.push(group);
     }
+  });
+
+  // --- PASS 2: Xử lý Tràn (Chỉ đẩy đơn có ngày finish xa đi) ---
+  const MAX_LOAD_LIMIT = 21; 
+  const spilloverPool: BomGroup[] = [...unmatchedPool];
+
+  Object.keys(initialAssignments).forEach(lineId => {
+      const line = lines.find(l => l.id === lineId)!;
+      let currentGroups = initialAssignments[lineId];
+      
+      const calculateLoad = (grps: BomGroup[]) => {
+          let totalH = 0;
+          grps.forEach(g => {
+              const target = moldTargets.find(t => t.moldType === g.moldType)?.targetPerHour || 0;
+              if (target > 0) {
+                  const machineCount = line.machineCount || (['H1', 'H2'].includes(line.lineCode) ? 4 : 8);
+                  totalH += g.totalQuantity / (target * machineCount);
+              }
+          });
+          return totalH;
+      };
+
+      // Nếu quá tải, bốc những đơn xa nhất chuyển vào spilloverPool
+      if (calculateLoad(currentGroups) > MAX_LOAD_LIMIT) {
+          // Sắp xếp theo ngày finish xa nhất lên đầu để bốc đi trước
+          currentGroups.sort((a, b) => b.avgFinishDate - a.avgFinishDate);
+          
+          while (calculateLoad(currentGroups) > MAX_LOAD_LIMIT && currentGroups.length > 1) {
+              const removed = currentGroups.shift(); // Lấy đơn xa nhất
+              if (removed) spilloverPool.push(removed);
+          }
+      }
+
+      // Lưu lại kết quả khớp cấu hình
+      currentGroups.forEach(g => {
+          const target = moldTargets.find(t => t.moldType === g.moldType)?.targetPerHour || 0;
+          const machineCount = line.machineCount || (['H1', 'H2'].includes(line.lineCode) ? 4 : 8);
+          const prodTime = calculateProductionTime(g.totalQuantity, target, machineCount);
+          
+          assignments[g.id] = {
+              lineId: line.id,
+              targetPerHour: target,
+              suggestion: `[Khớp cấu hình] ${prodTime.suggestion}`,
+              isUrgent: g.items.some((i: any) => i.isPriority)
+          };
+          lineLoads[line.id] += prodTime.totalHours;
+      });
+  });
+
+  // --- PASS 3: Phân bổ Pool Tràn vào các chuyền rảnh ---
+  // Sắp xếp spilloverPool để ưu tiên đơn gấp/gần trước
+  spilloverPool.sort((a, b) => {
+    const aUrgent = a.items.some((i: any) => i.isPriority);
+    const bUrgent = b.items.some((i: any) => i.isPriority);
+    if (aUrgent && !bUrgent) return -1;
+    if (!aUrgent && bUrgent) return 1;
+    return a.avgFinishDate - b.avgFinishDate;
+  });
+
+  spilloverPool.forEach(group => {
+      const firstItem = group.items[0];
+      const productType = (firstItem.productType || "").toUpperCase();
+      const thangHoa = (firstItem.thangHoa || "").trim() !== "" ? "CÓ" : "KHÔNG";
+      const mold = (group.moldType || "").toUpperCase();
+
+      let candidates = lines.filter(l => {
+          // Ràng buộc vật lý cứng
+          if (thangHoa === 'CÓ') {
+            const lineRulesForThangHoa = rulesByLine[l.id]?.filter(r => r.ruleType === 'THANG_HOA') || [];
+            if (!lineRulesForThangHoa.some(r => r.ruleValue.toUpperCase() === 'CÓ') && l.lineCode !== 'H1') return false; 
+          }
+          if (l.lineCode === 'M5' && m5RuleIsStrict && productType !== '1K3S') return false;
+          
+          // Tránh các line có cấu hình MOLD khác hoàn toàn
+          const lineMoldRules = rulesByLine[l.id]?.filter(r => r.ruleType === 'MOLD') || [];
+          if (lineMoldRules.length > 0 && !lineMoldRules.some(r => mold.includes(r.ruleValue.toUpperCase()))) return false;
+          
+          return true;
+      });
+
+      // Nếu lọc gắt quá mất candidate, nới lỏng (trừ Thăng Hoa/M5)
+      if (candidates.length === 0) {
+          candidates = lines.filter(l => {
+              if (thangHoa === 'CÓ' && l.lineCode !== 'H1') {
+                const lineRulesForThangHoa = rulesByLine[l.id]?.filter(r => r.ruleType === 'THANG_HOA') || [];
+                if (!lineRulesForThangHoa.some(r => r.ruleValue.toUpperCase() === 'CÓ')) return false;
+              }
+              if (l.lineCode === 'M5' && m5RuleIsStrict && productType !== '1K3S') return false;
+              return true;
+          });
+      }
+
+      // Sắp xếp candidates theo: Độ tương đồng Rule (Mold/ProductType) > Tải trọng (Load)
+      const bestLine = candidates.sort((a, b) => {
+          const getMatchScore = (lineId: string) => {
+              let score = 0;
+              const rules = rulesByLine[lineId] || [];
+              // Ưu tiên cực cao cho line có cấu hình Mold giống hệt
+              if (rules.some(r => r.ruleType === 'MOLD' && mold.includes(r.ruleValue.toUpperCase()))) score -= 100;
+              // Ưu tiên cao cho line có cấu hình Loại hàng giống hệt
+              if (rules.some(r => r.ruleType === 'PRODUCT_TYPE' && productType === r.ruleValue.toUpperCase())) score -= 50;
+              return score;
+          };
+
+          const scoreA = getMatchScore(a.id) + (lineLoads[a.id] * 5); // Nhân 5 để tải trọng (giờ) vẫn có trọng số
+          const scoreB = getMatchScore(b.id) + (lineLoads[b.id] * 5);
+          return scoreA - scoreB;
+      })[0] || lines[0];
+
+      const target = moldTargets.find(t => t.moldType === group.moldType)?.targetPerHour || 0;
+      const machineCount = bestLine.machineCount || (['H1', 'H2'].includes(bestLine.lineCode) ? 4 : 8);
+      const prodTime = calculateProductionTime(group.totalQuantity, target, machineCount);
+
+      assignments[group.id] = {
+          lineId: bestLine.id,
+          targetPerHour: target,
+          suggestion: `[Tự động cân đối] ${prodTime.suggestion}`,
+          isUrgent: group.items.some((i: any) => i.isPriority)
+      };
+      lineLoads[bestLine.id] += prodTime.totalHours;
   });
 
   return assignments;

@@ -14,7 +14,7 @@ export async function POST(req: Request) {
     const CHUNK_SIZE = 100;
     for (let i = 0; i < combines.length; i += CHUNK_SIZE) {
       const chunk = combines.slice(i, i + CHUNK_SIZE);
-      await db.insert(manualCombines).values(chunk);
+      await db.insert(manualCombines).values(chunk).onConflictDoNothing();
     }
 
     return NextResponse.json({ success: true, count: combines.length });

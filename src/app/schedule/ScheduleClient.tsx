@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { groupBOMs } from "@/lib/productionLogic";
 import { Filter, Search, Grid, List, CheckCircle, Clock, AlertTriangle, AlertCircle, Package, FileDown, RefreshCcw, Layers } from "lucide-react";
 
@@ -51,10 +51,72 @@ type LineSchedule = {
   predicted: PredictedGroup[];
 };
 
-export default function ScheduleClient({ data, rawData, manualCombines, knownMolds = [] }: { data: LineSchedule[], rawData: any[], manualCombines: any[], knownMolds?: string[] }) {
-  const [activeTab, setActiveTab] = useState('SCHEDULE'); 
+import { autoSuggest } from "@/lib/autoRouter";
+
+interface ScheduleClientProps {
+    data: LineSchedule[]; 
+    rawData: any[]; 
+    manualCombines: any[]; 
+    knownMolds?: string[];
+    allLines?: any[];
+    lineRules?: any[];
+    moldTargets?: any[];
+}
+
+export default function ScheduleClient({ 
+    data, 
+    rawData, 
+    manualCombines, 
+    knownMolds = [],
+    allLines = [],
+    lineRules = [],
+    moldTargets = []
+}: ScheduleClientProps) {
+  const [activeTab, setActiveTab] = useState<'SCHEDULE' | 'CONFIG'>('SCHEDULE'); 
   const [activeLineId, setActiveLineId] = useState(data[0]?.id);
+  const [mounted, setMounted] = useState(false);
   const [combineMode, setCombineMode] = useState<'AUTO' | 'MANUAL'>('AUTO');
+
+  useEffect(() => {
+    setMounted(true);
+    const saved = localStorage.getItem('combineMode');
+    if (saved === 'MANUAL' || saved === 'AUTO') {
+        setCombineMode(saved);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mounted) {
+        localStorage.setItem('combineMode', combineMode);
+    }
+  }, [combineMode, mounted]);
+
+  // --- DYNAMIC CLIENT-SIDE ROUTING ---
+  const clientData = useMemo(() => {
+    // During SSR or before mounting, use server-provided 'data' to ensure match
+    if (!mounted) return data; 
+
+    const groups = groupBOMs(rawData, manualCombines, combineMode);
+    const suggestions = autoSuggest(groups, allLines, moldTargets, lineRules);
+
+    return allLines.map(line => {
+        const linePredictedGroups = groups
+            .filter(g => suggestions[g.id]?.lineId === line.id)
+            .map(g => ({
+                ...g,
+                type: 'PREDICTED' as const,
+                suggestion: suggestions[g.id]?.suggestion || ""
+            }));
+
+        const serverLine = data.find(l => l.id === line.id);
+        return {
+            ...line,
+            confirmed: serverLine?.confirmed || [],
+            predicted: linePredictedGroups
+        };
+    });
+  }, [rawData, manualCombines, combineMode, allLines, moldTargets, lineRules, data, mounted]);
+
   const [filters, setFilters] = useState({
     urgent: false,
     delayed: false,
@@ -69,7 +131,7 @@ export default function ScheduleClient({ data, rawData, manualCombines, knownMol
 
   const [sortConfig, setSortConfig] = useState<{key: string, direction: 'asc' | 'desc'} | null>(null);
 
-  const activeLineRaw = data.find((l) => l.id === activeLineId);
+  const activeLineRaw = clientData.find((l) => l.id === activeLineId);
   
   // Re-group or Filter
   const processData = () => {
@@ -78,31 +140,9 @@ export default function ScheduleClient({ data, rawData, manualCombines, knownMol
     let currentConfirmed = activeLineRaw.confirmed;
     let currentPredicted = activeLineRaw.predicted;
 
-    // If combine mode is MANUAL, we might need to regroup the raw orders assigned to this line
-    if (combineMode === 'MANUAL') {
-        // Extract all raw orders that were predicted for this line in the server's AUTO result
-        const predictedIds = new Set(activeLineRaw.predicted.flatMap(p => p.items.map(i => i.id)));
-        const ordersForLine = rawData.filter(o => predictedIds.has(o.id));
-        
-        const manualGroups = groupBOMs(ordersForLine, manualCombines, 'MANUAL');
-        currentPredicted = manualGroups.map(g => ({
-            ...g,
-            type: 'PREDICTED',
-            items: g.items,
-            moldType: g.moldType,
-            cuttingDie: g.items[0]?.cuttingDie || '',
-            rawStatus: g.items[0]?.rawStatus || '',
-            logoStatus: g.items[0]?.logoStatus || undefined,
-            descriptionPU1: g.items[0]?.descriptionPU1 || '',
-            descriptionFB: g.items[0]?.descriptionFB || '',
-            productType: g.items[0]?.productType || '',
-            isPriority: g.items.some((i: any) => i.isPriority)
-        } as PredictedGroup));
-    }
-
     let all = [
-        ...currentConfirmed.map(j => ({ ...j, type: 'CONFIRMED' as const })),
-        ...currentPredicted.map(p => ({ ...p, type: 'PREDICTED' as const }))
+        ...currentConfirmed.map((j: any) => ({ ...j, type: 'CONFIRMED' as const })),
+        ...currentPredicted.map((p: any) => ({ ...p, type: 'PREDICTED' as const }))
     ];
 
     // Apply Filters
@@ -261,6 +301,20 @@ export default function ScheduleClient({ data, rawData, manualCombines, knownMol
               {activeTab === 'SCHEDULE' ? 'Cấu hình gộp' : 'Quay lại'}
           </button>
           <button 
+            onClick={() => {
+                // Toggling combineMode slightly or just triggering a re-render can force useMemo
+                setSyncing(true);
+                setTimeout(() => {
+                    setSyncing(false);
+                    // This forces useMemo to re-evaluate by effectively "touching" the state
+                    setCurrentPage(1); 
+                }, 500);
+            }}
+            className="flex items-center gap-2 px-6 py-3 bg-indigo-50 text-indigo-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-100 transition-all border border-indigo-100"
+          >
+            <RefreshCcw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} /> Phân bổ lại
+          </button>
+          <button 
             onClick={handleRefresh}
             disabled={syncing}
             className="p-4 bg-white border-2 border-slate-100 text-slate-600 rounded-2xl hover:border-indigo-600 transition-all"
@@ -411,7 +465,12 @@ export default function ScheduleClient({ data, rawData, manualCombines, knownMol
                                     </div>
                                 </td>
                                 <td className="px-6 py-8">
-                                    <div className="font-black text-xl text-slate-900 font-outfit tracking-tighter italic">#{item.bom}</div>
+                                    <div className="font-black text-xl text-slate-900 font-outfit tracking-tighter italic flex flex-wrap items-center gap-2">
+                                        #{item.bom}
+                                        {item.type === 'PREDICTED' && item.isManual && (
+                                            <span className="bg-indigo-600 text-white text-[10px] px-2 py-0.5 rounded-full not-italic">MANUAL</span>
+                                        )}
+                                    </div>
                                     <div className="flex gap-2 mt-2">
                                         <span className="text-[9px] font-bold px-2 py-0.5 bg-slate-100 text-slate-500 rounded-md">M: {item.moldType}</span>
                                         <span className="text-[9px] font-bold px-2 py-0.5 bg-slate-100 text-slate-500 rounded-md">D: {item.cuttingDie || '---'}</span>
@@ -419,7 +478,27 @@ export default function ScheduleClient({ data, rawData, manualCombines, knownMol
                                 </td>
                                 <td className="px-6 py-8">
                                     <div className="text-[10px] font-bold text-slate-500 max-w-[250px] whitespace-pre-line leading-relaxed">
-                                        {item.type === 'CONFIRMED' ? item.orderId?.split(',').join('\n') : item.items.map((i: any) => i.id).join('\n')}
+                                        {item.type === 'CONFIRMED' ? (
+                                            item.orderId?.split(',').map((id: string, idx: number) => {
+                                                const manual = manualCombines.find(m => String(m.orderId).trim() === id.trim());
+                                                return (
+                                                    <div key={idx} className="flex flex-col mb-1">
+                                                        <span>{id}</span>
+                                                        {manual && <span className="text-[8px] text-emerald-600 font-black uppercase bg-emerald-50 px-1 rounded w-fit">Manual: {manual.combineName}</span>}
+                                                    </div>
+                                                );
+                                            })
+                                        ) : (
+                                            item.items.map((i: any, idx: number) => {
+                                                const manual = manualCombines.find(m => String(m.orderId).trim() === String(i.id).trim());
+                                                return (
+                                                    <div key={idx} className="flex flex-col mb-1">
+                                                        <span>{i.id}</span>
+                                                        {manual && <span className="text-[8px] text-emerald-600 font-black uppercase bg-emerald-50 px-1 rounded w-fit">Manual: {manual.combineName}</span>}
+                                                    </div>
+                                                );
+                                            })
+                                        )}
                                     </div>
                                 </td>
                                 <td className="px-6 py-8">
@@ -444,6 +523,11 @@ export default function ScheduleClient({ data, rawData, manualCombines, knownMol
                                         <span className="px-4 py-1 bg-slate-900 text-white text-[9px] font-black rounded-xl italic">
                                             {item.productType || "SP"}
                                         </span>
+                                        {item.type === 'PREDICTED' && item.suggestion && (
+                                            <div className="text-[8px] font-black text-indigo-500 uppercase tracking-tighter">
+                                                {item.suggestion}
+                                            </div>
+                                        )}
                                         <div className={`px-3 py-1 rounded-xl text-[9px] font-black ${item.logoStatus === 'Có Logo' ? 'bg-emerald-100 text-emerald-600' : item.logoStatus === 'Chưa có Logo' ? 'bg-rose-100 text-rose-600 animate-pulse' : 'bg-slate-100 text-slate-500'}`}>
                                             {item.logoStatus || "Chờ Logo"}
                                         </div>
