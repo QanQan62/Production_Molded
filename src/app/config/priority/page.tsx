@@ -7,8 +7,8 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function PriorityPage() {
-  // Lấy các đơn đang WIP để có thể setup gầp
-  const wipOrders = await db.select().from(orders).where(sql`${orders.rawStatus} IN ('5.WIP IN MOLDING', '5.1.WIP SAU MOLDING', '6.WIP IN LEAN LINE')`);
+  // Lấy tất cả các đơn để đảm bảo hiển thị đủ thông tin trong bảng setup
+  const allOrders = await db.select().from(orders);
   const currentPriority = await db.select().from(priorityOrders);
 
   return (
@@ -18,7 +18,7 @@ export default async function PriorityPage() {
         <p className="text-slate-500 font-bold mt-2 uppercase tracking-widest text-xs italic">Điền đơn gấp để thay đổi ngày hoàn thành và đưa lên ưu tiên hàng đầu</p>
       </header>
 
-      <PriorityClient orders={wipOrders} initialPriority={currentPriority} />
+      <PriorityClient orders={allOrders} initialPriority={currentPriority} />
     </div>
   );
 }
