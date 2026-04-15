@@ -158,9 +158,9 @@ export default function ScheduleClient({
     // Search
     if (searchTerm) {
         const lowerSearch = searchTerm.toLowerCase();
-        all = all.filter(i => 
+        all = all.filter((i: any) => 
             (i.bom?.toLowerCase().includes(lowerSearch)) ||
-            (i.type === 'CONFIRMED' ? i.orderId?.toLowerCase().includes(lowerSearch) : i.items.some(it => it.id.toLowerCase().includes(lowerSearch))) ||
+            (i.type === 'CONFIRMED' ? i.orderId?.toLowerCase().includes(lowerSearch) : i.items.some((it: any) => it.id.toLowerCase().includes(lowerSearch))) ||
             (i.moldType?.toLowerCase().includes(lowerSearch)) ||
             ((i.type === 'CONFIRMED' ? i.brand : i.items[0]?.brand)?.toLowerCase().includes(lowerSearch))
         );
