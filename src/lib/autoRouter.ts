@@ -105,7 +105,7 @@ export function autoSuggest(
           grps.forEach(g => {
               const target = moldTargets.find(t => t.moldType === g.moldType)?.targetPerHour || 0;
               if (target > 0) {
-                  const machineCount = line.machineCount || (['H1', 'H2'].includes(line.lineCode) ? 4 : 8);
+                  const machineCount = line.machineCount || (['H1', 'H2'].includes(line.lineCode?.trim().toUpperCase()) ? 4 : 8);
                   totalH += g.totalQuantity / (target * machineCount);
               }
           });
@@ -126,7 +126,7 @@ export function autoSuggest(
       // Lưu lại kết quả khớp cấu hình
       currentGroups.forEach(g => {
           const target = moldTargets.find(t => t.moldType === g.moldType)?.targetPerHour || 0;
-          const machineCount = line.machineCount || (['H1', 'H2'].includes(line.lineCode) ? 4 : 8);
+          const machineCount = line.machineCount || (['H1', 'H2'].includes(line.lineCode?.trim().toUpperCase()) ? 4 : 8);
           const prodTime = calculateProductionTime(g.totalQuantity, target, machineCount);
           
           assignments[g.id] = {
