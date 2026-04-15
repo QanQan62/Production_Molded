@@ -41,7 +41,12 @@ export default async function SchedulePage() {
   const priorityOrders = await db.select().from(priorityOrdersSchema);
   const manualCombinesData = await db.select().from(manualCombines) as any[];
   
-  const readyOrdersRaw = await db.select().from(orders).where(sql`${orders.rawStatus} IN ('5.WIP IN MOLDING', '5.1.WIP SAU MOLDING')`);
+  const readyOrdersRaw = await db.select().from(orders).where(sql`${orders.rawStatus} IN (
+    '4.READY FOR MOLDING', 
+    '4.1.READY FOR MOLDING(S)',
+    '5.WIP IN MOLDING', 
+    '5.1.WIP SAU MOLDING'
+  )`);
 
   const readyOrders = readyOrdersRaw.map((o: any) => {
     const orderIdTrimmed = String(o.id || "").trim();

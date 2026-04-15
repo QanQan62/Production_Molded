@@ -128,6 +128,7 @@ function createGroupMetaData(items: Order[]) {
     avgFinishDate,
     minFinishDate,
     type,
+    isPriority: items.some((i: any) => i.isPriority),
     // Add missing UI fields
     cuttingDie: items[0].cuttingDie || "",
     rawStatus: items[0].rawStatus || "",
