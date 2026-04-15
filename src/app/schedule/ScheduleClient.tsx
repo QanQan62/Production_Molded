@@ -220,37 +220,47 @@ export default function ScheduleClient({
 
   const handleExportExcel = async () => {
     const { utils, writeFile } = await import("xlsx");
-    const exportData = filteredItems.map((o: any) => {
-        const ids = o.type === 'CONFIRMED' ? o.orderId : o.items.map((i: any) => i.id).join(', ');
-        const qty = o.type === 'CONFIRMED' ? o.qty : o.totalQuantity;
-        const finish = o.type === 'CONFIRMED' ? o.estimatedEndTime : new Date(o.minFinishDate).toLocaleDateString();
-        
-        const isPriority = o.type === 'CONFIRMED' ? o.isPriority : o.items.some((i: any) => i.isPriority);
-        const today = new Date().toISOString().split('T')[0];
-        const rawFinishDate = o.type === 'CONFIRMED' ? o.estimatedEndTime : (new Date(o.minFinishDate).toISOString().split('T')[0]);
-        const isDelayed = rawFinishDate && rawFinishDate < today;
-        
-        let note = "Bình thường";
-        if (isPriority) note = "Gấp";
-        else if (isDelayed) note = "Trễ";
-        else if (o.logoStatus === "Chưa có Logo") note = "Chưa có Logo";
+    const allExportData: any[] = [];
+    const today = new Date().toISOString().split('T')[0];
 
-        return {
-            "BOM": o.bom,
-            "Moldtype": o.moldType,
-            "Orders": ids,
-            "Qty": qty,
-            "Finish date": finish,
-            "Status": o.type === 'CONFIRMED' ? o.status : o.rawStatus,
-            "Type": o.productType || "---",
-            "Loại lưu ý": note
-        };
+    clientData.forEach(line => {
+        const lineItems = [
+            ...line.confirmed.map(c => ({ ...c, type: 'CONFIRMED' })),
+            ...line.predicted.map(p => ({ ...p, type: 'PREDICTED' }))
+        ];
+
+        lineItems.forEach((o: any) => {
+            const ids = o.type === 'CONFIRMED' ? o.orderId : o.items.map((i: any) => i.id).join(', ');
+            const qty = o.type === 'CONFIRMED' ? o.qty : o.totalQuantity;
+            const finish = o.type === 'CONFIRMED' ? o.estimatedEndTime : new Date(o.minFinishDate).toLocaleDateString('vi-VN');
+            
+            const isPriority = o.type === 'CONFIRMED' ? o.isPriority : o.items.some((i: any) => i.isPriority);
+            const rawFinishDate = o.type === 'CONFIRMED' ? o.estimatedEndTime : (new Date(o.minFinishDate).toISOString().split('T')[0]);
+            const isDelayed = rawFinishDate && rawFinishDate < today;
+            
+            let note = "Bình thường";
+            if (isPriority) note = "GẤP";
+            else if (isDelayed) note = "Trễ";
+            else if (o.logoStatus === "Chưa có Logo") note = "Chưa có Logo";
+
+            allExportData.push({
+                "Line": line.lineCode,
+                "BOM": o.bom,
+                "Moldtype": o.moldType,
+                "Orders": ids,
+                "Qty": qty,
+                "Finish date": finish,
+                "Status": o.type === 'CONFIRMED' ? o.status : o.rawStatus,
+                "Type": o.productType || "---",
+                "Note": note
+            });
+        });
     });
 
-    const ws = utils.json_to_sheet(exportData);
+    const ws = utils.json_to_sheet(allExportData);
     const wb = utils.book_new();
-    utils.book_append_sheet(wb, ws, "Schedule");
-    writeFile(wb, `Schedule_${activeLineRaw?.lineCode}_${new Date().toISOString().split('T')[0]}.xlsx`);
+    utils.book_append_sheet(wb, ws, "Full_Schedule");
+    writeFile(wb, `Schedule_Report_All_Lines_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const getRowStyle = (item: any) => {

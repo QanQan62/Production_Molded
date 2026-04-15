@@ -100,32 +100,36 @@ export default function MonitorClient({ initialLines, rawData }: { initialLines:
 
   const handleExportExcel = async () => {
     const { utils, writeFile } = await import("xlsx");
-    const exportData = filteredJobs.map(j => {
-        const duration = calculateDuration(j.order.leanlineInDate);
-        const isUrgent = j.order.isPriority || (j.order.finishDate === new Date().toISOString().split('T')[0]);
-        const isDelayed = !!(j.order.finishDate && j.order.finishDate < new Date().toISOString().split('T')[0]);
-        const isStagnant = duration.days >= 2;
+    const allExportData: any[] = [];
 
-        let note = "Bình thường";
-        if (isUrgent) note = "Gấp";
-        else if (isDelayed) note = "Trễ";
-        else if (isStagnant) note = "Tồn lâu";
+    initialLines.forEach(lineInfo => {
+        lineInfo.activeJobs.forEach(j => {
+            const duration = calculateDuration(j.order.leanlineInDate);
+            const isUrgent = j.order.isPriority || (j.order.finishDate === new Date().toISOString().split('T')[0]);
+            const isDelayed = !!(j.order.finishDate && j.order.finishDate < new Date().toISOString().split('T')[0]);
+            const isStagnant = duration.days >= 2;
 
-        return {
-          "Line": activeLineDataRaw?.line.lineCode,
-          "Order": j.order.id,
-          "BOM": j.order.bom,
-          "Qty": j.order.quantity,
-          "Finish": j.order.finishDate,
-          "Status": j.order.logoStatus,
-          "Loại lưu ý": note
-        };
+            let note = "Bình thường";
+            if (isUrgent) note = "Gấp";
+            else if (isDelayed) note = "Trễ";
+            else if (isStagnant) note = "Tồn lâu";
+
+            allExportData.push({
+                "Line": lineInfo.line.lineCode,
+                "Order": j.order.id,
+                "BOM": j.order.bom,
+                "Qty": j.order.quantity,
+                "Finish": j.order.finishDate,
+                "Status": j.order.logoStatus,
+                "Note": note
+            });
+        });
     });
     
-    const ws = utils.json_to_sheet(exportData);
+    const ws = utils.json_to_sheet(allExportData);
     const wb = utils.book_new();
-    utils.book_append_sheet(wb, ws, "Monitor");
-    writeFile(wb, `Monitor_${activeLineDataRaw?.line.lineCode}.xlsx`);
+    utils.book_append_sheet(wb, ws, "All_Lines_Monitor");
+    writeFile(wb, `Monitor_All_Lines_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   return (
