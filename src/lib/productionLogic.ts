@@ -105,7 +105,11 @@ export function groupBOMs(allOrders: Order[], manualCombines: { orderId: string,
     const autoResults = [...applyStandardRule(moldingOutOrders), ...applyStandardRule(moldingInOrders)];
     const otherResults = others.map(o => ({ ...createGroupMetaData([o]), id: `OTHER_${o.id}` }));
 
-    return [...manualResult, ...autoResults, ...otherResults].sort((a, b) => a.minFinishDate - b.minFinishDate);
+    return [...manualResult, ...autoResults, ...otherResults].sort((a, b) => {
+        if (a.isPriority && !b.isPriority) return -1;
+        if (!a.isPriority && b.isPriority) return 1;
+        return a.minFinishDate - b.minFinishDate;
+    });
 }
 
 function createGroupMetaData(items: Order[]) {
