@@ -3,6 +3,9 @@ import { lines, lineRules, orders } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import RulesClient from "./RulesClient";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function RulesPage() {
   const allLinesRaw = await db.select().from(lines).where(eq(lines.isActive, true));
   const allowedLines = ['M1', 'M2', 'M3', 'M4', 'M5', 'H1', 'H2'];
