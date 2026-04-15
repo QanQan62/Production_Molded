@@ -3,6 +3,9 @@ import { orders, priorityOrders } from "@/db/schema";
 import { eq, sql } from "drizzle-orm";
 import PriorityClient from "./PriorityClient";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function PriorityPage() {
   // Lấy các đơn đang WIP để có thể setup gầp
   const wipOrders = await db.select().from(orders).where(sql`${orders.rawStatus} IN ('5.WIP IN MOLDING', '5.1.WIP SAU MOLDING', '6.WIP IN LEAN LINE')`);
