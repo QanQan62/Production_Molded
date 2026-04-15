@@ -191,13 +191,12 @@ export default function ScheduleClient({
   const totalPages = Math.ceil(filteredItems.length / itemsPerPage);
 
   const unknownMolds = React.useMemo(() => {
-     const standardMolds = ['1K1S', '1K3S', 'SP', 'DIE-CUT', 'LAMINATING', 'DIE CUT'];
      const mappedKnownMolds = knownMolds.map(m => m.toUpperCase());
      
      const found = new Set<string>();
      rawData.forEach(o => {
          const mold = (o.moldType || "").toUpperCase().trim();
-         if (mold && !standardMolds.includes(mold) && !mappedKnownMolds.includes(mold)) {
+         if (mold && !mappedKnownMolds.includes(mold)) {
              found.add(mold);
          }
      });

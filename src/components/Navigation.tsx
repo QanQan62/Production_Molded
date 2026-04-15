@@ -11,6 +11,7 @@ export default function Navigation() {
     { name: "Kế hoạch ngày mai", href: "/schedule", icon: "🗓️" },
     { name: "Giám sát xưởng", href: "/monitor", icon: "🏭" },
     { name: "Cấu hình Chuyền", href: "/config/rules", icon: "⚙️" },
+    { name: "Thông số Khuôn", href: "/config/molds", icon: "📐" },
     { name: "Đơn hàng Gấp", href: "/config/priority", icon: "🚀" },
   ];
 
