@@ -267,7 +267,7 @@ export default function RulesClient({ lines, initialRules, fieldOptions }: { lin
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
-            {Object.entries(groupedRules).map(([lId, lineRulesArr]) => (
+            {(Object.entries(groupedRules) as [string, any[]][]).map(([lId, lineRulesArr]) => (
               <tr key={lId} className="hover:bg-slate-50/50 transition-colors">
                 <td className="px-8 py-6 font-black text-slate-900 align-top">
                    Chuyền {lines.find(l => l.id === lId)?.lineCode || lId}
