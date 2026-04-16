@@ -19,12 +19,16 @@ export default async function RulesPage() {
   const uniqueMolds = Array.from(new Set(rawOrders.map(o => o.moldType).filter(Boolean))) as string[];
   const uniqueCustomers = Array.from(new Set(rawOrders.map(o => o.articleCode).filter(Boolean))) as string[];
   
+  const lineOptions = ['Tất cả các Line', ...allLines.map(l => l.lineCode)];
+  
   const fieldOptions = {
       'BRAND': uniqueBrands,
       'MOLD': uniqueMolds,
       'ARTICLE': uniqueCustomers,
       'PRODUCT_TYPE': ['1k1s', '1k3s', 'SP'],
-      'THANG_HOA': ['Có', 'Không']
+      'THANG_HOA': ['Có', 'Không'],
+      'OVERFLOW_ALLOW': lineOptions,
+      'OVERFLOW_DENY': lineOptions
   };
 
   return (

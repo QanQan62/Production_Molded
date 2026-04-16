@@ -60,6 +60,8 @@ export function autoSuggest(
 
         let isStrictMatch = true;
         for (const ruleType in rulesByType) {
+            if (ruleType === 'OVERFLOW_ALLOW' || ruleType === 'OVERFLOW_DENY') continue; // Bỏ qua rule tràn ở Pass 1
+            
             const rules = rulesByType[ruleType];
             const isMatchForThisType = rules.some(r => {
                 const val = (r.ruleValue || "").toUpperCase().trim();
@@ -94,7 +96,7 @@ export function autoSuggest(
 
   // --- PASS 2: Xử lý Tràn (Chỉ đẩy đơn có ngày finish xa đi) ---
   const MAX_LOAD_LIMIT = 21; 
-  const spilloverPool: BomGroup[] = [...unmatchedPool];
+  const spilloverPool: BomGroup[] = [...unmatchedPool.map(g => ({ ...g, spilledFromLineCode: 'NONE' }))];
 
   Object.keys(initialAssignments).forEach(lineId => {
       const line = lines.find(l => l.id === lineId)!;
@@ -114,12 +116,14 @@ export function autoSuggest(
 
       // Nếu quá tải, bốc những đơn xa nhất chuyển vào spilloverPool
       if (calculateLoad(currentGroups) > MAX_LOAD_LIMIT) {
-          // Sắp xếp theo ngày finish xa nhất lên đầu để bốc đi trước
           currentGroups.sort((a, b) => b.avgFinishDate - a.avgFinishDate);
           
           while (calculateLoad(currentGroups) > MAX_LOAD_LIMIT && currentGroups.length > 1) {
-              const removed = currentGroups.shift(); // Lấy đơn xa nhất
-              if (removed) spilloverPool.push(removed);
+              const removed = currentGroups.shift();
+              if (removed) {
+                  (removed as any).spilledFromLineCode = line.lineCode; // Tag source
+                  spilloverPool.push(removed);
+              }
           }
       }
 
@@ -140,7 +144,6 @@ export function autoSuggest(
   });
 
   // --- PASS 3: Phân bổ Pool Tràn vào các chuyền rảnh ---
-  // Sắp xếp spilloverPool để ưu tiên đơn gấp/gần trước
   spilloverPool.sort((a, b) => {
     const aUrgent = a.items.some((i: any) => i.isPriority);
     const bUrgent = b.items.some((i: any) => i.isPriority);
@@ -154,23 +157,39 @@ export function autoSuggest(
       const productType = (firstItem.productType || "").toUpperCase();
       const thangHoa = (firstItem.thangHoa || "").trim() !== "" ? "CÓ" : "KHÔNG";
       const mold = (group.moldType || "").toUpperCase();
+      const sourceLineCode = (group as any).spilledFromLineCode || 'NONE';
 
       let candidates = lines.filter(l => {
+          // Overflow Rules Check
+          const lineRulesForThisLine = rulesByLine[l.id] || [];
+          
+          // Rule: Không nhận đơn tràn từ Line
+          const denyRules = lineRulesForThisLine.filter(r => r.ruleType === 'OVERFLOW_DENY');
+          if (denyRules.some(r => r.ruleValue === 'Tất cả các Line' || r.ruleValue === sourceLineCode)) {
+              return false;
+          }
+
+          // Rule: Nhận đơn tràn từ Line (Nếu có ít nhất 1 rule này, thì CHỈ nhận từ các line đó)
+          const allowRules = lineRulesForThisLine.filter(r => r.ruleType === 'OVERFLOW_ALLOW');
+          if (allowRules.length > 0) {
+              const explicitlyAllowed = allowRules.some(r => r.ruleValue === 'Tất cả các Line' || r.ruleValue === sourceLineCode);
+              if (!explicitlyAllowed) return false;
+          }
+
           // Ràng buộc vật lý cứng
           if (thangHoa === 'CÓ') {
-            const lineRulesForThangHoa = rulesByLine[l.id]?.filter(r => r.ruleType === 'THANG_HOA') || [];
+            const lineRulesForThangHoa = lineRulesForThisLine.filter(r => r.ruleType === 'THANG_HOA');
             if (!lineRulesForThangHoa.some(r => r.ruleValue.toUpperCase() === 'CÓ') && l.lineCode !== 'H1') return false; 
           }
           if (l.lineCode === 'M5' && m5RuleIsStrict && productType !== '1K3S') return false;
           
-          // Tránh các line có cấu hình MOLD khác hoàn toàn
-          const lineMoldRules = rulesByLine[l.id]?.filter(r => r.ruleType === 'MOLD') || [];
+          const lineMoldRules = lineRulesForThisLine.filter(r => r.ruleType === 'MOLD');
           if (lineMoldRules.length > 0 && !lineMoldRules.some(r => mold.includes(r.ruleValue.toUpperCase()))) return false;
           
           return true;
       });
 
-      // Nếu lọc gắt quá mất candidate, nới lỏng (trừ Thăng Hoa/M5)
+      // Nếu candidates trống, nới lỏng nhưng vẫn giữ Thăng Hoa/M5
       if (candidates.length === 0) {
           candidates = lines.filter(l => {
               if (thangHoa === 'CÓ' && l.lineCode !== 'H1') {
@@ -187,14 +206,12 @@ export function autoSuggest(
           const getMatchScore = (lineId: string) => {
               let score = 0;
               const rules = rulesByLine[lineId] || [];
-              // Ưu tiên cực cao cho line có cấu hình Mold giống hệt
               if (rules.some(r => r.ruleType === 'MOLD' && mold.includes(r.ruleValue.toUpperCase()))) score -= 100;
-              // Ưu tiên cao cho line có cấu hình Loại hàng giống hệt
               if (rules.some(r => r.ruleType === 'PRODUCT_TYPE' && productType === r.ruleValue.toUpperCase())) score -= 50;
               return score;
           };
 
-          const scoreA = getMatchScore(a.id) + (lineLoads[a.id] * 5); // Nhân 5 để tải trọng (giờ) vẫn có trọng số
+          const scoreA = getMatchScore(a.id) + (lineLoads[a.id] * 5);
           const scoreB = getMatchScore(b.id) + (lineLoads[b.id] * 5);
           return scoreA - scoreB;
       })[0] || lines[0];

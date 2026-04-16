@@ -166,9 +166,33 @@ export default function ScheduleClient({
         );
     }
 
-    // Sort
-    if (sortConfig) {
-        all.sort((a, b) => {
+    // Default Sort + Manual Sort
+    all.sort((a, b) => {
+        // Priority 1: GẤP (isPriority)
+        const aPriority = a.isPriority ? 1 : 0;
+        const bPriority = b.isPriority ? 1 : 0;
+        if (aPriority !== bPriority) return bPriority - aPriority;
+
+        // Priority 2: 5.1 + Có Logo
+        const aIs51WithLogo = (a.rawStatus?.includes('5.1') && a.logoStatus === 'Có Logo') ? 1 : 0;
+        const bIs51WithLogo = (b.rawStatus?.includes('5.1') && b.logoStatus === 'Có Logo') ? 1 : 0;
+        if (aIs51WithLogo !== bIs51WithLogo) return bIs51WithLogo - aIs51WithLogo;
+        
+        // If both are P2, sort by finish date
+        if (aIs51WithLogo && bIs51WithLogo) {
+            const dateA = a.type === 'CONFIRMED' ? a.estimatedEndTime : a.minFinishDate;
+            const dateB = b.type === 'CONFIRMED' ? b.estimatedEndTime : b.minFinishDate;
+            if (dateA < dateB) return -1;
+            if (dateA > dateB) return 1;
+        }
+
+        // Priority 3: Status 5. OR Chưa có Logo
+        const aP3 = (a.rawStatus?.startsWith('5.') || a.logoStatus === 'Chưa có Logo') ? 1 : 0;
+        const bP3 = (b.rawStatus?.startsWith('5.') || b.logoStatus === 'Chưa có Logo') ? 1 : 0;
+        if (aP3 !== bP3) return bP3 - aP3;
+
+        // Manual Sort (if config exists)
+        if (sortConfig) {
             let valA: any, valB: any;
             if (sortConfig.key === 'bom') { valA = a.bom; valB = b.bom; }
             if (sortConfig.key === 'order') { valA = a.type === 'CONFIRMED' ? a.orderId : a.items[0]?.id; valB = b.type === 'CONFIRMED' ? b.orderId : b.items[0]?.id; }
@@ -178,9 +202,16 @@ export default function ScheduleClient({
             
             if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
             if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
-            return 0;
-        });
-    }
+        }
+
+        // Default: sort by finish date
+        const dateA = a.type === 'CONFIRMED' ? a.estimatedEndTime : a.minFinishDate;
+        const dateB = b.type === 'CONFIRMED' ? b.estimatedEndTime : b.minFinishDate;
+        if (dateA < dateB) return -1;
+        if (dateA > dateB) return 1;
+
+        return 0;
+    });
 
     return all;
   };
