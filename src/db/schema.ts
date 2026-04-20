@@ -31,6 +31,7 @@ export const lineRules = sqliteTable('line_rules', {
   lineId: text('line_id').references(() => lines.id),
   ruleType: text('rule_type').notNull().default('BRAND'),
   ruleValue: text('rule_value').notNull(),
+  isStrict: integer('is_strict', { mode: 'boolean' }).default(true),
 });
 
 export const priorityOrders = sqliteTable('priority_orders', {

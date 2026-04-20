@@ -3,13 +3,15 @@
 import React, { useState } from "react";
 
 export default function RulesClient({ lines, initialRules, fieldOptions }: { lines: any[], initialRules: any[], fieldOptions: Record<string, string[]> }) {
-  const [rules, setRules] = useState(initialRules);
+  const normalizeStrict = (val: any): boolean => val !== false && val !== 0 && val !== '0' && val !== 'false' && val !== null;
+
+  const [rules, setRules] = useState(initialRules.map(r => ({ ...r, isStrict: normalizeStrict(r.isStrict) })));
   const [loading, setLoading] = useState(false);
   const [lineId, setLineId] = useState(lines[0]?.id || "");
-  const [attributes, setAttributes] = useState([{ ruleType: "BRAND", ruleValue: "", min: "", max: "" }]);
+  const [attributes, setAttributes] = useState([{ ruleType: "BRAND", ruleValue: "", min: "", max: "", isStrict: true }]);
 
   const handleAddAttribute = () => {
-    setAttributes([...attributes, { ruleType: "BRAND", ruleValue: "", min: "", max: "" }]);
+    setAttributes([...attributes, { ruleType: "BRAND", ruleValue: "", min: "", max: "", isStrict: true }]);
   };
 
   const handleRemoveAttribute = (index: number) => {
@@ -21,12 +23,15 @@ export default function RulesClient({ lines, initialRules, fieldOptions }: { lin
   const handleAttributeChange = (index: number, field: string, value: string) => {
     const newAttrs = [...attributes];
     (newAttrs[index] as any)[field] = value;
-    if (field === 'ruleType') newAttrs[index].ruleValue = "";
+    if (field === 'ruleType') {
+       newAttrs[index].ruleValue = "";
+       newAttrs[index].isStrict = true; // reset to default
+    }
     setAttributes(newAttrs);
   };
 
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState({ ruleType: "", ruleValue: "", min: "", max: "" });
+  const [editForm, setEditForm] = useState({ ruleType: "", ruleValue: "", min: "", max: "", isStrict: true });
 
   const handleEditClick = (rule: any) => {
     setEditingId(rule.id);
@@ -34,7 +39,7 @@ export default function RulesClient({ lines, initialRules, fieldOptions }: { lin
     if (rule.ruleType === 'TOTAL_QTY_RANGE') {
       [min, max] = rule.ruleValue.split('-');
     }
-    setEditForm({ ruleType: rule.ruleType, ruleValue: rule.ruleValue, min: min || "", max: max || "" });
+    setEditForm({ ruleType: rule.ruleType, ruleValue: rule.ruleValue, min: min || "", max: max || "", isStrict: normalizeStrict(rule.isStrict) });
   };
 
   const handleUpdate = async () => {
@@ -49,7 +54,7 @@ export default function RulesClient({ lines, initialRules, fieldOptions }: { lin
       const resp = await fetch("/api/line-rules", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: editingId, ruleType: editForm.ruleType, ruleValue: finalValue }),
+        body: JSON.stringify({ id: editingId, ruleType: editForm.ruleType, ruleValue: finalValue, isStrict: editForm.isStrict }),
       });
       if (resp.ok) {
         window.location.reload();
@@ -76,7 +81,7 @@ export default function RulesClient({ lines, initialRules, fieldOptions }: { lin
         await fetch("/api/line-rules", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ lineId, ruleType: attr.ruleType, ruleValue: finalValue }),
+          body: JSON.stringify({ lineId, ruleType: attr.ruleType, ruleValue: finalValue, isStrict: attr.isStrict }),
         });
       }
       window.location.reload();
@@ -166,7 +171,7 @@ export default function RulesClient({ lines, initialRules, fieldOptions }: { lin
             {attributes.map((attr, index) => {
               const selectedOptions = fieldOptions[attr.ruleType] || [];
               return (
-                <div key={index} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end bg-slate-50/50 p-4 rounded-2xl border border-dashed border-slate-200">
+                <div key={index} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end bg-slate-50/50 p-4 rounded-2xl border border-dashed border-slate-200">
                   <div className="flex flex-col gap-2">
                     <label className="text-[9px] uppercase font-bold text-slate-400 tracking-widest">Loại thuộc tính</label>
                     <select 
@@ -225,6 +230,23 @@ export default function RulesClient({ lines, initialRules, fieldOptions }: { lin
                         ))}
                         </select>
                     )}
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <label className="text-[9px] uppercase font-bold text-slate-400 tracking-widest">Loại Rule</label>
+                    <div className="flex bg-white p-1 rounded-xl border-2 border-slate-100">
+                        <button
+                          className={`flex-1 py-2 px-1 text-[10px] font-bold rounded-lg transition-all ${(attr.isStrict !== false && attr.isStrict !== 0 && attr.isStrict !== '0' && attr.isStrict !== 'false') ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+                          onClick={() => handleAttributeChange(index, 'isStrict', true as any)}
+                        >
+                          Cứng (AND)
+                        </button>
+                        <button
+                          className={`flex-1 py-2 px-1 text-[10px] font-bold rounded-lg transition-all ${!(attr.isStrict !== false && attr.isStrict !== 0 && attr.isStrict !== '0' && attr.isStrict !== 'false') ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+                          onClick={() => handleAttributeChange(index, 'isStrict', false as any)}
+                        >
+                          Mềm (OR)
+                        </button>
+                    </div>
                   </div>
                   <div className="flex gap-2">
                     <button 
@@ -313,6 +335,18 @@ export default function RulesClient({ lines, initialRules, fieldOptions }: { lin
                                 </select>
                               )}
                               
+                              <div className="flex items-center gap-2 mt-2 p-2 bg-slate-50 rounded-lg border border-slate-200">
+                                <label className="text-[9px] uppercase font-bold text-slate-500 flex items-center gap-2 cursor-pointer w-full">
+                                  <input 
+                                    type="checkbox" 
+                                    checked={!!editForm.isStrict} 
+                                    onChange={e => setEditForm({ ...editForm, isStrict: e.target.checked })}
+                                    className="w-3 h-3 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
+                                  />
+                                  <span>Rule Cứng (AND)</span>
+                                </label>
+                              </div>
+
                               <div className="flex gap-2 pt-1 border-t border-slate-100">
                                 <button onClick={handleUpdate} className="flex-1 py-1 bg-indigo-600 text-white rounded-md text-[9px] font-bold uppercase">Lưu</button>
                                 <button onClick={() => setEditingId(null)} className="flex-1 py-1 bg-slate-100 text-slate-500 rounded-md text-[9px] font-bold uppercase">Hủy</button>
@@ -322,6 +356,9 @@ export default function RulesClient({ lines, initialRules, fieldOptions }: { lin
                             <>
                               <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">
                                 {getRuleTypeLabel(rule.ruleType)}
+                                <span className={`ml-2 px-1.5 py-0.5 rounded text-[8px] ${rule.isStrict ? 'bg-rose-100 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}>
+                                  {rule.isStrict ? 'CỨNG' : 'MỀM'}
+                                </span>
                               </span>
                               <span className="text-sm font-black text-indigo-700">
                                 {rule.ruleType === 'TOTAL_QTY_RANGE' ? `Khoảng ${rule.ruleValue}` : 

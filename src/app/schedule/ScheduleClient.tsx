@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { groupBOMs } from "@/lib/productionLogic";
-import { Filter, Search, Grid, List, CheckCircle, Clock, AlertTriangle, AlertCircle, Package, FileDown, RefreshCcw, Layers } from "lucide-react";
+import { Filter, Search, Grid, List, CheckCircle, Clock, AlertTriangle, AlertCircle, Package, FileDown, RefreshCcw, Layers, GitMerge } from "lucide-react";
 
 type Job = {
   type: 'CONFIRMED';
@@ -77,11 +77,17 @@ export default function ScheduleClient({
   const [mounted, setMounted] = useState(false);
   const [combineMode, setCombineMode] = useState<'AUTO' | 'MANUAL'>('AUTO');
 
+  const [overflowEnabled, setOverflowEnabled] = useState(true);
+
   useEffect(() => {
     setMounted(true);
     const saved = localStorage.getItem('combineMode');
     if (saved === 'MANUAL' || saved === 'AUTO') {
         setCombineMode(saved);
+    }
+    const savedOverflow = localStorage.getItem('overflowEnabled');
+    if (savedOverflow !== null) {
+        setOverflowEnabled(savedOverflow !== 'false');
     }
   }, []);
 
@@ -91,15 +97,21 @@ export default function ScheduleClient({
     }
   }, [combineMode, mounted]);
 
+  useEffect(() => {
+    if (mounted) {
+        localStorage.setItem('overflowEnabled', String(overflowEnabled));
+    }
+  }, [overflowEnabled, mounted]);
+
   // --- DYNAMIC CLIENT-SIDE ROUTING ---
   const clientData = useMemo(() => {
     // During SSR or before mounting, use server-provided 'data' to ensure match
     if (!mounted) return data; 
 
     const groups = groupBOMs(rawData, manualCombines, combineMode);
-    const suggestions = autoSuggest(groups, allLines, moldTargets, lineRules);
+    const suggestions = autoSuggest(groups, allLines, moldTargets, lineRules, overflowEnabled);
 
-    return allLines.map(line => {
+    const linesProcessed = allLines.map(line => {
         const linePredictedGroups = groups
             .filter(g => suggestions[g.id]?.lineId === line.id)
             .map(g => ({
@@ -115,7 +127,26 @@ export default function ScheduleClient({
             predicted: linePredictedGroups
         };
     });
-  }, [rawData, manualCombines, combineMode, allLines, moldTargets, lineRules, data, mounted]);
+
+    const unassignedGroups = groups
+        .filter(g => !suggestions[g.id])
+        .map(g => ({
+            ...g,
+            type: 'PREDICTED' as const,
+            suggestion: "Chưa khớp Line Rule hoặc do tắt Tràn Chuyền"
+        }));
+
+    return [
+        ...linesProcessed,
+        {
+            id: 'UNASSIGNED',
+            lineCode: 'CHƯA PHÂN BỔ',
+            machineCount: 0,
+            confirmed: [],
+            predicted: unassignedGroups
+        }
+    ];
+  }, [rawData, manualCombines, combineMode, allLines, moldTargets, lineRules, data, mounted, overflowEnabled]);
 
   const [filters, setFilters] = useState({
     urgent: false,
@@ -133,6 +164,18 @@ export default function ScheduleClient({
 
   const activeLineRaw = clientData.find((l) => l.id === activeLineId);
   
+  const checkIsUrgent5 = (item: any) => {
+      if (item.rawStatus?.includes('5.1')) return false;
+      if (!item.rawStatus?.startsWith('5.')) return false;
+      const fdStr = item.type === 'CONFIRMED' ? item.estimatedEndTime : (new Date(item.minFinishDate).toISOString().split('T')[0]);
+      if (!fdStr) return false;
+      const todayStr = new Date().toISOString().split('T')[0];
+      const fd = new Date(fdStr).getTime();
+      const today = new Date(todayStr).getTime();
+      const diffDays = (fd - today) / (1000 * 3600 * 24);
+      return diffDays <= 5;
+  };
+
   // Re-group or Filter
   const processData = () => {
     if (!activeLineRaw) return [];
@@ -168,28 +211,19 @@ export default function ScheduleClient({
 
     // Default Sort + Manual Sort
     all.sort((a, b) => {
-        // Priority 1: GẤP (isPriority)
-        const aPriority = a.isPriority ? 1 : 0;
-        const bPriority = b.isPriority ? 1 : 0;
-        if (aPriority !== bPriority) return bPriority - aPriority;
+        const getPriority = (item: any) => {
+            if (item.isPriority) return 1;
+            const isUrgent5 = checkIsUrgent5(item);
+            if ((item.rawStatus?.includes('5.1') || isUrgent5) && item.logoStatus === 'Có Logo') return 2;
+            if (item.rawStatus?.startsWith('5.') || item.logoStatus === 'Chưa có Logo') return 3;
+            return 4;
+        };
 
-        // Priority 2: 5.1 + Có Logo
-        const aIs51WithLogo = (a.rawStatus?.includes('5.1') && a.logoStatus === 'Có Logo') ? 1 : 0;
-        const bIs51WithLogo = (b.rawStatus?.includes('5.1') && b.logoStatus === 'Có Logo') ? 1 : 0;
-        if (aIs51WithLogo !== bIs51WithLogo) return bIs51WithLogo - aIs51WithLogo;
-        
-        // If both are P2, sort by finish date
-        if (aIs51WithLogo && bIs51WithLogo) {
-            const dateA = a.type === 'CONFIRMED' ? a.estimatedEndTime : a.minFinishDate;
-            const dateB = b.type === 'CONFIRMED' ? b.estimatedEndTime : b.minFinishDate;
-            if (dateA < dateB) return -1;
-            if (dateA > dateB) return 1;
-        }
+        const pA = getPriority(a);
+        const pB = getPriority(b);
 
-        // Priority 3: Status 5. OR Chưa có Logo
-        const aP3 = (a.rawStatus?.startsWith('5.') || a.logoStatus === 'Chưa có Logo') ? 1 : 0;
-        const bP3 = (b.rawStatus?.startsWith('5.') || b.logoStatus === 'Chưa có Logo') ? 1 : 0;
-        if (aP3 !== bP3) return bP3 - aP3;
+        // Priority 1 -> 2 -> 3 -> 4
+        if (pA !== pB) return pA - pB;
 
         // Manual Sort (if config exists)
         if (sortConfig) {
@@ -263,9 +297,12 @@ export default function ScheduleClient({
             else if (isDelayed) note = "Trễ";
             else if (j.logoStatus === "Chưa có Logo") note = "Chưa có Logo";
 
+            const manual = manualCombines.find(m => String(m.orderId).trim() === j.orderId);
+
             allExportData.push({
                 "Line sắp vào": line.lineCode,
                 "Pro order": j.orderId,
+                "Nhóm Gộp (Combine)": manual ? manual.combineName : "",
                 "brand": j.brand || "",
                 "article": j.articleCode || "",
                 "Qty": j.qty,
@@ -294,9 +331,12 @@ export default function ScheduleClient({
                 else if (isDelayed) note = "Trễ";
                 else if (item.logoStatus === "Chưa có Logo") note = "Chưa có Logo";
 
+                const manual = manualCombines.find(m => String(m.orderId).trim() === item.id);
+
                 allExportData.push({
                     "Line sắp vào": line.lineCode,
                     "Pro order": item.id,
+                    "Nhóm Gộp (Combine)": manual ? manual.combineName : "",
                     "brand": item.brand || "",
                     "article": item.articleCode || "",
                     "Qty": item.quantity,
@@ -327,6 +367,7 @@ export default function ScheduleClient({
     
     if (item.isPriority) return "bg-rose-100 hover:bg-rose-200 border-rose-500 shadow-[inset_4px_0_0_0_#e11d48]";
     if (finishDate && finishDate < today) return "bg-purple-100 hover:bg-purple-200 border-purple-500 shadow-[inset_4px_0_0_0_#9333ea]";
+    if (checkIsUrgent5(item)) return "bg-blue-100 hover:bg-blue-200 border-blue-500 shadow-[inset_4px_0_0_0_#3b82f6]";
     if (item.logoStatus === "Chưa có Logo") return "bg-amber-100 hover:bg-amber-200 border-amber-500 shadow-[inset_4px_0_0_0_#d97706]";
     return "bg-white hover:bg-slate-50 border-slate-200";
   };
@@ -348,6 +389,19 @@ export default function ScheduleClient({
         </div>
 
         <div className="flex flex-wrap gap-3">
+          {/* Overflow Toggle */}
+          <button
+            onClick={() => setOverflowEnabled(v => !v)}
+            className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all border-2 ${
+              overflowEnabled
+                ? 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'
+                : 'bg-rose-50 border-rose-300 text-rose-700 hover:bg-rose-100'
+            }`}
+            title={overflowEnabled ? 'Tắt: Đơn chỉ vào line khớp đúng rule' : 'Bật: Đơn dư được tự động cân đối sang line rảnh'}
+          >
+            <GitMerge className="w-4 h-4" />
+            Tràn Chuyền: {overflowEnabled ? 'BẬT' : 'TẮT'}
+          </button>
           <div className="flex bg-slate-100 p-1 rounded-2xl">
             <button 
                 onClick={() => setCombineMode('AUTO')}
@@ -448,7 +502,7 @@ export default function ScheduleClient({
 
             {/* Line Selection Tabs */}
             <div className="flex overflow-x-auto gap-2 p-2 bg-slate-100/50 rounded-3xl no-scrollbar">
-                {data.map((line) => (
+                {clientData.map((line) => (
                     <button
                         key={line.id}
                         onClick={() => { setActiveLineId(line.id); setCurrentPage(1); }}
@@ -456,9 +510,9 @@ export default function ScheduleClient({
                         activeLineId === line.id
                             ? "bg-slate-900 text-white shadow-xl scale-[1.05] z-10"
                             : "text-slate-400 hover:text-slate-600"
-                        }`}
+                        } ${line.id === 'UNASSIGNED' ? 'border-2 border-dashed border-slate-300' : ''}`}
                     >
-                        Chuyền {line.lineCode}
+                        {line.id === 'UNASSIGNED' ? line.lineCode : `Chuyền ${line.lineCode}`}
                         <span className={`px-2 py-0.5 rounded-lg text-[9px] ${activeLineId === line.id ? 'bg-white/20' : 'bg-slate-200 text-slate-500'}`}>
                             {line.confirmed.length + line.predicted.length}
                         </span>
@@ -470,14 +524,18 @@ export default function ScheduleClient({
             <div className="bg-white rounded-[3.5rem] shadow-2xl overflow-hidden border border-slate-100">
                 <div className="bg-slate-900 px-12 py-10 text-white flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
                     <div>
-                        <h2 className="text-3xl md:text-5xl font-black tracking-tighter uppercase font-outfit italic">Chuyền {activeLineRaw?.lineCode}</h2>
-                        <div className="flex items-center gap-4 mt-3">
-                             <div className="flex items-center gap-2 px-4 py-1.5 bg-white/10 rounded-full border border-white/10">
-                                <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                                <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">{activeLineRaw?.machineCount} Máy</span>
-                             </div>
-                             <p className="text-slate-500 text-[10px] font-bold uppercase tracking-[0.2em]">Kế hoạch sản xuất dự kiến</p>
-                        </div>
+                        <h2 className="text-3xl md:text-5xl font-black tracking-tighter uppercase font-outfit italic">
+                            {activeLineRaw?.id === 'UNASSIGNED' ? activeLineRaw?.lineCode : `Chuyền ${activeLineRaw?.lineCode}`}
+                        </h2>
+                        {activeLineRaw?.id !== 'UNASSIGNED' && (
+                            <div className="flex items-center gap-4 mt-3">
+                                 <div className="flex items-center gap-2 px-4 py-1.5 bg-white/10 rounded-full border border-white/10">
+                                    <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                                    <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">{activeLineRaw?.machineCount} Máy</span>
+                                 </div>
+                                 <p className="text-slate-500 text-[10px] font-bold uppercase tracking-[0.2em]">Kế hoạch sản xuất dự kiến</p>
+                            </div>
+                        )}
                     </div>
                     <div className="text-right">
                         <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Dự thảo hiện tại</div>
@@ -525,7 +583,7 @@ export default function ScheduleClient({
                                 <tr key={idx} className={`transition-all group border ${rowClass} rounded-3xl shadow-sm`}>
                                 <td className="px-6 py-8 rounded-l-[2.5rem]">
                                     <div className="flex items-center gap-4">
-                                        <span className="text-xl font-black text-slate-200 group-hover:text-indigo-200 font-outfit">{seq < 10 ? `0${seq}` : seq}</span>
+                                        <span className="text-xl font-black text-slate-900 group-hover:text-indigo-600 font-outfit">{seq < 10 ? `0${seq}` : seq}</span>
                                         <div className="flex flex-col gap-1">
                                             {item.isPriority && <span className="px-2 py-0.5 bg-rose-600 text-white text-[8px] font-black rounded-lg w-fit">GẤP</span>}
                                             {isDelayed && <span className="px-2 py-0.5 bg-purple-600 text-white text-[8px] font-black rounded-lg w-fit">TRỄ</span>}
@@ -545,7 +603,7 @@ export default function ScheduleClient({
                                     </div>
                                 </td>
                                 <td className="px-6 py-8">
-                                    <div className="text-[10px] font-bold text-slate-500 max-w-[250px] whitespace-pre-line leading-relaxed">
+                                    <div className="text-[10px] font-bold text-slate-900 max-w-[250px] whitespace-pre-line leading-relaxed">
                                         {item.type === 'CONFIRMED' ? (
                                             item.orderId?.split(',').map((id: string, idx: number) => {
                                                 const manual = manualCombines.find(m => String(m.orderId).trim() === id.trim());
@@ -570,7 +628,7 @@ export default function ScheduleClient({
                                     </div>
                                 </td>
                                 <td className="px-6 py-8">
-                                    <div className="text-[10px] font-black text-slate-400 tracking-widest uppercase italic">
+                                    <div className="text-[10px] font-black text-slate-900 tracking-widest uppercase italic">
                                         {item.type === 'CONFIRMED' ? item.brand : item.items[0]?.brand}
                                     </div>
                                 </td>
@@ -578,13 +636,13 @@ export default function ScheduleClient({
                                     <div className="text-3xl font-black text-slate-800 font-outfit italic">
                                         {(item.type === 'CONFIRMED' ? item.qty : item.totalQuantity)?.toLocaleString()}
                                     </div>
-                                    <p className="text-[8px] font-bold text-slate-400 uppercase mt-1">Sản lượng (PRS)</p>
+                                    <p className="text-[8px] font-bold text-slate-500 uppercase mt-1">Sản lượng (PRS)</p>
                                 </td>
                                 <td className="px-6 py-8">
-                                    <div className={`text-sm font-black ${isDelayed ? 'text-rose-500' : 'text-slate-600'}`}>
+                                    <div className={`text-sm font-black ${isDelayed ? 'text-rose-500' : 'text-slate-900'}`}>
                                         {finishDate ? new Date(finishDate).toLocaleDateString('vi-VN') : '---'}
                                     </div>
-                                    <div className="text-[8px] font-bold text-slate-400 uppercase mt-1">Mục tiêu</div>
+                                    <div className="text-[8px] font-bold text-slate-500 uppercase mt-1">Mục tiêu</div>
                                 </td>
                                 <td className="px-6 py-8 rounded-r-[2.5rem] text-right">
                                     <div className="flex flex-col items-end gap-2">
@@ -592,7 +650,7 @@ export default function ScheduleClient({
                                             {item.productType || "SP"}
                                         </span>
                                         {item.type === 'PREDICTED' && item.suggestion && (
-                                            <div className="text-[8px] font-black text-indigo-500 uppercase tracking-tighter">
+                                            <div className={`text-[8px] font-black uppercase tracking-tighter ${activeLineRaw?.id === 'UNASSIGNED' ? 'text-rose-500 bg-rose-50 px-2 py-0.5 rounded' : 'text-indigo-500'}`}>
                                                 {item.suggestion}
                                             </div>
                                         )}

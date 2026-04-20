@@ -17,7 +17,8 @@ export function autoSuggest(
   bomGroups: BomGroup[],
   lines: Line[],
   moldTargets: MoldTarget[],
-  lineRules: any[] = []
+  lineRules: any[] = [],
+  overflowEnabled: boolean = true
 ) {
   const assignments: Record<string, { lineId: string; targetPerHour: number; suggestion: string, isUrgent: boolean }> = {};
   const lineLoads: Record<string, number> = {};
@@ -58,28 +59,50 @@ export function autoSuggest(
             rulesByType[r.ruleType].push(r);
         });
 
-        let isStrictMatch = true;
+        const checkMatch = (r: any) => {
+            const val = (r.ruleValue || "").toUpperCase().trim();
+            if (r.ruleType === 'BRAND') return brand.includes(val);
+            if (r.ruleType === 'MOLD') return mold.includes(val);
+            if (r.ruleType === 'ARTICLE') return article.includes(val);
+            if (r.ruleType === 'PRODUCT_TYPE') return productType === val;
+            if (r.ruleType === 'THANG_HOA') return thangHoa === val;
+            if (r.ruleType === 'TOTAL_QTY_GT') return totalQty > Number(val);
+            if (r.ruleType === 'TOTAL_QTY_LT') return totalQty < Number(val);
+            if (r.ruleType === 'TOTAL_QTY_RANGE') {
+                const parts = val.split('-');
+                if (parts.length === 2) return totalQty >= Number(parts[0]) && totalQty <= Number(parts[1]);
+            }
+            return false;
+        };
+
+        let passesHard = true;
+        let passesSoft = false;
+        let hasSoftRules = false;
+
         for (const ruleType in rulesByType) {
             if (ruleType === 'OVERFLOW_ALLOW' || ruleType === 'OVERFLOW_DENY') continue; // Bỏ qua rule tràn ở Pass 1
             
             const rules = rulesByType[ruleType];
-            const isMatchForThisType = rules.some(r => {
-                const val = (r.ruleValue || "").toUpperCase().trim();
-                if (r.ruleType === 'BRAND') return brand.includes(val);
-                if (r.ruleType === 'MOLD') return mold.includes(val);
-                if (r.ruleType === 'ARTICLE') return article.includes(val);
-                if (r.ruleType === 'PRODUCT_TYPE') return productType === val;
-                if (r.ruleType === 'THANG_HOA') return thangHoa === val;
-                if (r.ruleType === 'TOTAL_QTY_GT') return totalQty > Number(val);
-                if (r.ruleType === 'TOTAL_QTY_LT') return totalQty < Number(val);
-                if (r.ruleType === 'TOTAL_QTY_RANGE') {
-                    const parts = val.split('-');
-                    if (parts.length === 2) return totalQty >= Number(parts[0]) && totalQty <= Number(parts[1]);
+            const hardRules = rules.filter(r => r.isStrict !== false && r.isStrict !== 0 && r.isStrict !== '0' && r.isStrict !== 'false');
+            const softRules = rules.filter(r => r.isStrict === false || r.isStrict === 0 || r.isStrict === '0' || r.isStrict === 'false');
+
+            if (hardRules.length > 0) {
+                const isMatchHard = hardRules.some(checkMatch);
+                if (!isMatchHard) {
+                    passesHard = false;
+                    break;
                 }
-                return false;
-            });
-            if (!isMatchForThisType) { isStrictMatch = false; break; }
+            }
+
+            if (softRules.length > 0) {
+                hasSoftRules = true;
+                if (!passesSoft) {
+                    passesSoft = softRules.some(checkMatch);
+                }
+            }
         }
+        
+        const isStrictMatch = passesHard && (!hasSoftRules || passesSoft);
         if (isStrictMatch) {
             const l = lines.find(ln => ln.id === lineId);
             if (l) matchedLines.push(l);
@@ -114,8 +137,8 @@ export function autoSuggest(
           return totalH;
       };
 
-      // Nếu quá tải, bốc những đơn xa nhất chuyển vào spilloverPool
-      if (calculateLoad(currentGroups) > MAX_LOAD_LIMIT) {
+      // Nếu quá tải VÀ có bật chế độ tràn, bốc những đơn xa nhất chuyển vào spilloverPool
+      if (overflowEnabled && calculateLoad(currentGroups) > MAX_LOAD_LIMIT) {
           currentGroups.sort((a, b) => b.avgFinishDate - a.avgFinishDate);
           
           while (calculateLoad(currentGroups) > MAX_LOAD_LIMIT && currentGroups.length > 1) {
@@ -144,6 +167,8 @@ export function autoSuggest(
   });
 
   // --- PASS 3: Phân bổ Pool Tràn vào các chuyền rảnh ---
+  // Khi overflowEnabled = false, bỏ qua bước này: chỉ đơn khớp rule mới được phân bổ
+  if (!overflowEnabled) return assignments;
   spilloverPool.sort((a, b) => {
     const aUrgent = a.items.some((i: any) => i.isPriority);
     const bUrgent = b.items.some((i: any) => i.isPriority);
