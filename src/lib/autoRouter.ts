@@ -83,8 +83,8 @@ export function autoSuggest(
             if (ruleType === 'OVERFLOW_ALLOW' || ruleType === 'OVERFLOW_DENY') continue; // Bỏ qua rule tràn ở Pass 1
             
             const rules = rulesByType[ruleType];
-            const hardRules = rules.filter(r => r.isStrict !== false && r.isStrict !== 0 && r.isStrict !== '0' && r.isStrict !== 'false');
-            const softRules = rules.filter(r => r.isStrict === false || r.isStrict === 0 || r.isStrict === '0' || r.isStrict === 'false');
+            const hardRules = rules.filter(r => String(r.isStrict) !== 'false' && String(r.isStrict) !== '0');
+            const softRules = rules.filter(r => String(r.isStrict) === 'false' || String(r.isStrict) === '0');
 
             if (hardRules.length > 0) {
                 const isMatchHard = hardRules.some(checkMatch);

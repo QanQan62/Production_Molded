@@ -235,13 +235,13 @@ export default function RulesClient({ lines, initialRules, fieldOptions }: { lin
                     <label className="text-[9px] uppercase font-bold text-slate-400 tracking-widest">Loại Rule</label>
                     <div className="flex bg-white p-1 rounded-xl border-2 border-slate-100">
                         <button
-                          className={`flex-1 py-2 px-1 text-[10px] font-bold rounded-lg transition-all ${(attr.isStrict !== false && attr.isStrict !== 0 && attr.isStrict !== '0' && attr.isStrict !== 'false') ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+                          className={`flex-1 py-2 px-1 text-[10px] font-bold rounded-lg transition-all ${attr.isStrict ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
                           onClick={() => handleAttributeChange(index, 'isStrict', true as any)}
                         >
                           Cứng (AND)
                         </button>
                         <button
-                          className={`flex-1 py-2 px-1 text-[10px] font-bold rounded-lg transition-all ${!(attr.isStrict !== false && attr.isStrict !== 0 && attr.isStrict !== '0' && attr.isStrict !== 'false') ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+                          className={`flex-1 py-2 px-1 text-[10px] font-bold rounded-lg transition-all ${!attr.isStrict ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
                           onClick={() => handleAttributeChange(index, 'isStrict', false as any)}
                         >
                           Mềm (OR)
