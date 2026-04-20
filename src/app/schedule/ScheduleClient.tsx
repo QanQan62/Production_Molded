@@ -525,7 +525,7 @@ export default function ScheduleClient({
             </div>
 
             {/* Line Selection Tabs */}
-            <div className="flex overflow-x-auto gap-2 p-2 bg-slate-100/50 rounded-3xl no-scrollbar">
+            <div className="sticky top-2 z-50 flex overflow-x-auto gap-2 p-2 bg-white/80 backdrop-blur-xl rounded-3xl no-scrollbar border border-slate-100 shadow-sm">
                 {clientData.map((line) => (
                     <button
                         key={line.id}
