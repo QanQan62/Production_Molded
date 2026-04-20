@@ -9,12 +9,16 @@ export async function POST(req: Request) {
     const isStrictValue = body.isStrict !== undefined 
       ? (body.isStrict === true || body.isStrict === 1 || body.isStrict === '1' || body.isStrict === 'true')
       : true;
+    const isExcludeValue = body.isExclude !== undefined
+      ? (body.isExclude === true || body.isExclude === 1 || body.isExclude === '1' || body.isExclude === 'true')
+      : false;
 
     await db.insert(lineRules).values({
       lineId: body.lineId,
       ruleType: body.ruleType || 'BRAND',
       ruleValue: body.ruleValue ? String(body.ruleValue).trim() : "",
-      isStrict: (isStrictValue ? 1 : 0) as any
+      isStrict: (isStrictValue ? 1 : 0) as any,
+      isExclude: (isExcludeValue ? 1 : 0) as any
     });
     return NextResponse.json({ success: true });
   } catch (e: any) {
@@ -39,18 +43,22 @@ export async function DELETE(req: Request) {
 export async function PATCH(req: Request) {
   try {
     const body = await req.json();
-    const { id, ruleType, ruleValue, isStrict } = body;
+    const { id, ruleType, ruleValue, isStrict, isExclude } = body;
     if (!id) return NextResponse.json({ success: false, error: "Missing ID" }, { status: 400 });
 
     const isStrictValue = isStrict !== undefined 
       ? (isStrict === true || isStrict === 1 || isStrict === '1' || isStrict === 'true')
       : true;
+    const isExcludeValue = isExclude !== undefined
+      ? (isExclude === true || isExclude === 1 || isExclude === '1' || isExclude === 'true')
+      : false;
 
     await db.update(lineRules)
       .set({
         ruleType: ruleType,
         ruleValue: ruleValue ? String(ruleValue).trim() : "",
-        isStrict: (isStrictValue ? 1 : 0) as any
+        isStrict: (isStrictValue ? 1 : 0) as any,
+        isExclude: (isExcludeValue ? 1 : 0) as any
       })
       .where(eq(lineRules.id, Number(id)));
 

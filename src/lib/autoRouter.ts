@@ -61,18 +61,22 @@ export function autoSuggest(
 
         const checkMatch = (r: any) => {
             const val = (r.ruleValue || "").toUpperCase().trim();
-            if (r.ruleType === 'BRAND') return brand.includes(val);
-            if (r.ruleType === 'MOLD') return mold.includes(val);
-            if (r.ruleType === 'ARTICLE') return article.includes(val);
-            if (r.ruleType === 'PRODUCT_TYPE') return productType === val;
-            if (r.ruleType === 'THANG_HOA') return thangHoa === val;
-            if (r.ruleType === 'TOTAL_QTY_GT') return totalQty > Number(val);
-            if (r.ruleType === 'TOTAL_QTY_LT') return totalQty < Number(val);
-            if (r.ruleType === 'TOTAL_QTY_RANGE') {
+            const isExclude = String(r.isExclude) === 'true' || String(r.isExclude) === '1';
+            
+            let match = false;
+            if (r.ruleType === 'BRAND') match = brand.includes(val);
+            else if (r.ruleType === 'MOLD') match = mold.includes(val);
+            else if (r.ruleType === 'ARTICLE') match = article.includes(val);
+            else if (r.ruleType === 'PRODUCT_TYPE') match = productType === val;
+            else if (r.ruleType === 'THANG_HOA') match = thangHoa === val;
+            else if (r.ruleType === 'TOTAL_QTY_GT') match = totalQty > Number(val);
+            else if (r.ruleType === 'TOTAL_QTY_LT') match = totalQty < Number(val);
+            else if (r.ruleType === 'TOTAL_QTY_RANGE') {
                 const parts = val.split('-');
-                if (parts.length === 2) return totalQty >= Number(parts[0]) && totalQty <= Number(parts[1]);
+                if (parts.length === 2) match = totalQty >= Number(parts[0]) && totalQty <= Number(parts[1]);
             }
-            return false;
+            
+            return isExclude ? !match : match;
         };
 
         let passesHard = true;
