@@ -230,14 +230,15 @@ export default function ScheduleClient({
                 ? getLocalDate(item.estimatedEndTime)
                 : getLocalDate(item.minFinishDate);
 
-            if (item.isPriority || (fd && fd <= today)) return 1;
+            if (item.isPriority) return 1;
+            if (fd && fd <= today) return 2;
             
             const isUrgent5 = checkIsUrgent5(item);
             const isReadyLogo = item.logoStatus === 'Có Logo' || item.logoStatus === 'Không in';
 
-            if ((item.rawStatus?.includes('5.1') || isUrgent5) && isReadyLogo) return 2;
-            if (item.rawStatus?.startsWith('5.') || item.logoStatus === 'Chưa có Logo') return 3;
-            return 4;
+            if ((item.rawStatus?.includes('5.1') || isUrgent5) && isReadyLogo) return 3;
+            if (item.rawStatus?.startsWith('5.') || item.logoStatus === 'Chưa có Logo') return 4;
+            return 5;
         };
 
         const pA = getPriority(a);
