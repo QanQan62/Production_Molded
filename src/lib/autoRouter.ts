@@ -91,8 +91,13 @@ export function autoSuggest(
             const softRules = rules.filter(r => String(r.isStrict) === 'false' || String(r.isStrict) === '0');
 
             if (hardRules.length > 0) {
-                const isMatchHard = hardRules.some(checkMatch);
-                if (!isMatchHard) {
+                const inclusions = hardRules.filter(r => String(r.isExclude) !== 'true' && String(r.isExclude) !== '1');
+                const exclusions = hardRules.filter(r => String(r.isExclude) === 'true' || String(r.isExclude) === '1');
+
+                const passInc = inclusions.length === 0 || inclusions.some(checkMatch);
+                const passExc = exclusions.length === 0 || exclusions.every(checkMatch);
+
+                if (!passInc || !passExc) {
                     passesHard = false;
                     break;
                 }
@@ -101,7 +106,13 @@ export function autoSuggest(
             if (softRules.length > 0) {
                 hasSoftRules = true;
                 if (!passesSoft) {
-                    passesSoft = softRules.some(checkMatch);
+                    const inclusions = softRules.filter(r => String(r.isExclude) !== 'true' && String(r.isExclude) !== '1');
+                    const exclusions = softRules.filter(r => String(r.isExclude) === 'true' || String(r.isExclude) === '1');
+
+                    const passInc = inclusions.length === 0 || inclusions.some(checkMatch);
+                    const passExc = exclusions.length === 0 || exclusions.every(checkMatch);
+                    
+                    if (passInc && passExc) passesSoft = true;
                 }
             }
         }
@@ -213,7 +224,15 @@ export function autoSuggest(
           if (l.lineCode === 'M5' && m5RuleIsStrict && productType !== '1K3S') return false;
           
           const lineMoldRules = lineRulesForThisLine.filter(r => r.ruleType === 'MOLD');
-          if (lineMoldRules.length > 0 && !lineMoldRules.some(r => mold.includes(r.ruleValue.toUpperCase()))) return false;
+          if (lineMoldRules.length > 0) {
+            const inclusions = lineMoldRules.filter(r => String(r.isExclude) !== 'true' && String(r.isExclude) !== '1');
+            const exclusions = lineMoldRules.filter(r => String(r.isExclude) === 'true' || String(r.isExclude) === '1');
+
+            const passInc = inclusions.length === 0 || inclusions.some(r => mold.includes(r.ruleValue.toUpperCase()));
+            const passExc = exclusions.length === 0 || exclusions.every(r => !mold.includes(r.ruleValue.toUpperCase()));
+
+            if (!passInc || !passExc) return false;
+          }
           
           return true;
       });
