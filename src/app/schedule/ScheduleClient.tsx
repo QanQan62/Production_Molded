@@ -164,13 +164,20 @@ export default function ScheduleClient({
 
   const activeLineRaw = clientData.find((l) => l.id === activeLineId);
   
+  const getLocalDate = (val: any) => {
+    if (!val) return null;
+    if (typeof val === 'number') return new Date(val).toISOString().split('T')[0];
+    if (typeof val === 'string') return val.split(' ')[0];
+    return null;
+  };
+
   const checkIsUrgent5 = (item: any) => {
       if (item.rawStatus?.includes('5.1')) return false;
       if (!item.rawStatus?.startsWith('5.')) return false;
       
       const fdStr = item.type === 'CONFIRMED' 
-        ? (item.estimatedEndTime ? item.estimatedEndTime.split(' ')[0] : null)
-        : (item.minFinishDate ? item.minFinishDate.split(' ')[0] : null);
+        ? getLocalDate(item.estimatedEndTime)
+        : getLocalDate(item.minFinishDate);
 
       if (!fdStr) return false;
       const todayStr = new Date().toISOString().split('T')[0];
@@ -199,8 +206,8 @@ export default function ScheduleClient({
         const today = new Date().toISOString().split('T')[0];
         all = all.filter(i => {
             const fd = i.type === 'CONFIRMED' 
-                ? (i.estimatedEndTime ? i.estimatedEndTime.split(' ')[0] : null)
-                : (i.minFinishDate ? i.minFinishDate.split(' ')[0] : null);
+                ? getLocalDate(i.estimatedEndTime)
+                : getLocalDate(i.minFinishDate);
             return fd && fd <= today;
         });
     }
@@ -220,13 +227,15 @@ export default function ScheduleClient({
         const getPriority = (item: any) => {
             const today = new Date().toISOString().split('T')[0];
             const fd = item.type === 'CONFIRMED' 
-                ? (item.estimatedEndTime ? item.estimatedEndTime.split(' ')[0] : null)
-                : (item.minFinishDate ? item.minFinishDate.split(' ')[0] : null);
+                ? getLocalDate(item.estimatedEndTime)
+                : getLocalDate(item.minFinishDate);
 
             if (item.isPriority || (fd && fd <= today)) return 1;
             
             const isUrgent5 = checkIsUrgent5(item);
-            if ((item.rawStatus?.includes('5.1') || isUrgent5) && item.logoStatus === 'Có Logo') return 2;
+            const isReadyLogo = item.logoStatus === 'Có Logo' || item.logoStatus === 'Không in';
+
+            if ((item.rawStatus?.includes('5.1') || isUrgent5) && isReadyLogo) return 2;
             if (item.rawStatus?.startsWith('5.') || item.logoStatus === 'Chưa có Logo') return 3;
             return 4;
         };
@@ -376,8 +385,8 @@ export default function ScheduleClient({
   const getRowStyle = (item: any) => {
     const today = new Date().toISOString().split('T')[0];
     const fd = item.type === 'CONFIRMED' 
-        ? (item.estimatedEndTime ? item.estimatedEndTime.split(' ')[0] : null)
-        : (item.minFinishDate ? item.minFinishDate.split(' ')[0] : null);
+        ? getLocalDate(item.estimatedEndTime)
+        : getLocalDate(item.minFinishDate);
     
     if (item.isPriority) return "bg-rose-100 hover:bg-rose-200 border-rose-500 shadow-[inset_4px_0_0_0_#e11d48]";
     if (fd && fd <= today) return "bg-purple-100 hover:bg-purple-200 border-purple-500 shadow-[inset_4px_0_0_0_#9333ea]";
@@ -590,8 +599,8 @@ export default function ScheduleClient({
                             const seq = (currentPage - 1) * itemsPerPage + idx + 1;
                             const today = new Date().toISOString().split('T')[0];
                             const finishDate = item.type === 'CONFIRMED' 
-                                ? (item.estimatedEndTime ? item.estimatedEndTime.split(' ')[0] : null)
-                                : (item.minFinishDate ? item.minFinishDate.split(' ')[0] : null);
+                                ? getLocalDate(item.estimatedEndTime)
+                                : getLocalDate(item.minFinishDate);
                             const isDelayed = finishDate && finishDate <= today;
                             const rowClass = getRowStyle(item);
                             
