@@ -167,7 +167,11 @@ export default function ScheduleClient({
   const checkIsUrgent5 = (item: any) => {
       if (item.rawStatus?.includes('5.1')) return false;
       if (!item.rawStatus?.startsWith('5.')) return false;
-      const fdStr = item.type === 'CONFIRMED' ? item.estimatedEndTime : (new Date(item.minFinishDate).toISOString().split('T')[0]);
+      
+      const fdStr = item.type === 'CONFIRMED' 
+        ? (item.estimatedEndTime ? item.estimatedEndTime.split(' ')[0] : null)
+        : (item.minFinishDate ? item.minFinishDate.split(' ')[0] : null);
+
       if (!fdStr) return false;
       const todayStr = new Date().toISOString().split('T')[0];
       const fd = new Date(fdStr).getTime();
@@ -194,8 +198,10 @@ export default function ScheduleClient({
     if (filters.delayed) {
         const today = new Date().toISOString().split('T')[0];
         all = all.filter(i => {
-            const fd = i.type === 'CONFIRMED' ? i.estimatedEndTime : (new Date(i.minFinishDate).toISOString().split('T')[0]);
-            return fd && fd < today;
+            const fd = i.type === 'CONFIRMED' 
+                ? (i.estimatedEndTime ? i.estimatedEndTime.split(' ')[0] : null)
+                : (i.minFinishDate ? i.minFinishDate.split(' ')[0] : null);
+            return fd && fd <= today;
         });
     }
     // Search
@@ -212,7 +218,13 @@ export default function ScheduleClient({
     // Default Sort + Manual Sort
     all.sort((a, b) => {
         const getPriority = (item: any) => {
-            if (item.isPriority) return 1;
+            const today = new Date().toISOString().split('T')[0];
+            const fd = item.type === 'CONFIRMED' 
+                ? (item.estimatedEndTime ? item.estimatedEndTime.split(' ')[0] : null)
+                : (item.minFinishDate ? item.minFinishDate.split(' ')[0] : null);
+
+            if (item.isPriority || (fd && fd <= today)) return 1;
+            
             const isUrgent5 = checkIsUrgent5(item);
             if ((item.rawStatus?.includes('5.1') || isUrgent5) && item.logoStatus === 'Có Logo') return 2;
             if (item.rawStatus?.startsWith('5.') || item.logoStatus === 'Chưa có Logo') return 3;
@@ -363,10 +375,12 @@ export default function ScheduleClient({
 
   const getRowStyle = (item: any) => {
     const today = new Date().toISOString().split('T')[0];
-    const finishDate = item.type === 'CONFIRMED' ? item.estimatedEndTime : (new Date(item.minFinishDate).toISOString().split('T')[0]);
+    const fd = item.type === 'CONFIRMED' 
+        ? (item.estimatedEndTime ? item.estimatedEndTime.split(' ')[0] : null)
+        : (item.minFinishDate ? item.minFinishDate.split(' ')[0] : null);
     
     if (item.isPriority) return "bg-rose-100 hover:bg-rose-200 border-rose-500 shadow-[inset_4px_0_0_0_#e11d48]";
-    if (finishDate && finishDate < today) return "bg-purple-100 hover:bg-purple-200 border-purple-500 shadow-[inset_4px_0_0_0_#9333ea]";
+    if (fd && fd <= today) return "bg-purple-100 hover:bg-purple-200 border-purple-500 shadow-[inset_4px_0_0_0_#9333ea]";
     if (checkIsUrgent5(item)) return "bg-blue-100 hover:bg-blue-200 border-blue-500 shadow-[inset_4px_0_0_0_#3b82f6]";
     if (item.logoStatus === "Chưa có Logo") return "bg-amber-100 hover:bg-amber-200 border-amber-500 shadow-[inset_4px_0_0_0_#d97706]";
     return "bg-white hover:bg-slate-50 border-slate-200";
@@ -575,8 +589,10 @@ export default function ScheduleClient({
                         {displayed.map((item, idx) => {
                             const seq = (currentPage - 1) * itemsPerPage + idx + 1;
                             const today = new Date().toISOString().split('T')[0];
-                            const finishDate = item.type === 'CONFIRMED' ? item.estimatedEndTime : (new Date(item.minFinishDate).toISOString().split('T')[0]);
-                            const isDelayed = finishDate && finishDate < today;
+                            const finishDate = item.type === 'CONFIRMED' 
+                                ? (item.estimatedEndTime ? item.estimatedEndTime.split(' ')[0] : null)
+                                : (item.minFinishDate ? item.minFinishDate.split(' ')[0] : null);
+                            const isDelayed = finishDate && finishDate <= today;
                             const rowClass = getRowStyle(item);
                             
                             return (
