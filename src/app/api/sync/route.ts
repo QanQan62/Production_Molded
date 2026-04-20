@@ -7,7 +7,25 @@ import { sql } from "drizzle-orm";
 
 export async function syncAllData() {
     // 1. Chạy raw query trực tiếp trên client để tránh lỗi Drizzle sql template với table name OVN_DATA
-    const rawQuery = `SELECT "PRO ORDER", "Brand", "ArticleCode", "QtyOrder", "MOLD_IN(PRO)", "MOLD_OUT(PRO)", "Finish Date(PPC)", "BOM", "#MOLDTYPE", "Status", "LINE CODE", "LEAN_IN(PRO)", "#LAST", "Recieved Logo", "CODE LOGO1", "THĂNG HOA", "Description PU1", "Description FB"
+    const rawQuery = `SELECT 
+                        "PRO ORDER" AS proOrder, 
+                        "Brand" AS brand, 
+                        "ArticleCode" AS articleCode, 
+                        "QtyOrder" AS qtyOrder, 
+                        "MOLD_IN(PRO)" AS moldIn, 
+                        "MOLD_OUT(PRO)" AS moldOut, 
+                        "Finish Date(PPC)" AS finishDate, 
+                        "BOM" AS bom, 
+                        "#MOLDTYPE" AS moldType, 
+                        "Status" AS status, 
+                        "LINE CODE" AS lineCode, 
+                        "LEAN_IN(PRO)" AS leanIn, 
+                        "#LAST" AS last, 
+                        "Recieved Logo" AS receivedLogo, 
+                        "CODE LOGO1" AS codeLogo1, 
+                        "SubIFM" AS subIFM, 
+                        "Description PU1" AS descriptionPU1, 
+                        "Description FB" AS descriptionFB
                       FROM "OVN_DATA" 
                       WHERE "Status" IN ('5.WIP IN MOLDING', '5.1.WIP SAU MOLDING', '6.WIP IN LEAN LINE', '7.PACKING', '7.1 RETURN LINE', '8.KHO TẠM')`;
     
@@ -25,20 +43,20 @@ export async function syncAllData() {
 
     // 2. Chuyển đổi dữ liệu cho bảng orders
     const insertData = rows.map((row: any) => {
-      const moldInValue = Number(row["MOLD_IN(PRO)"]);
+      const moldInValue = Number(row.moldIn);
       const moldInStr = !isNaN(moldInValue) ? excelToDate(moldInValue) : null;
       
-      const moldOutValue = Number(row["MOLD_OUT(PRO)"]);
+      const moldOutValue = Number(row.moldOut);
       const moldOutStr = !isNaN(moldOutValue) ? excelToDate(moldOutValue) : null;
 
-      const finishValue = Number(row["Finish Date(PPC)"]);
+      const finishValue = Number(row.finishDate);
       const finishStr = (finishValue && !isNaN(finishValue)) ? excelToDate(finishValue) : null;
 
-      const leanInValue = Number(row["LEAN_IN(PRO)"]);
+      const leanInValue = Number(row.leanIn);
       const leanInStr = (leanInValue && !isNaN(leanInValue)) ? excelToDate(leanInValue) : null;
 
-      const codeLogo1 = String(row["CODE LOGO1"] || "").trim();
-      const receivedLogo = String(row["Recieved Logo"] || "").trim();
+      const codeLogo1 = String(row.codeLogo1 || "").trim();
+      const receivedLogo = String(row.receivedLogo || "").trim();
       
       let logoStatus = "Không in";
       if (codeLogo1 !== "") {
@@ -49,30 +67,30 @@ export async function syncAllData() {
         }
       }
 
-      const moldType = String(row["#MOLDTYPE"] || "").trim();
+      const moldType = String(row.moldType || "").trim();
 
       return {
-        id: String(row["PRO ORDER"] || "").trim(),
-        brand: String(row["Brand"] || "").trim(),
-        articleCode: String(row["ArticleCode"] || "").trim(),
-        quantity: Number(row["QtyOrder"] || 0),
+        id: String(row.proOrder || "").trim(),
+        brand: String(row.brand || "").trim(),
+        articleCode: String(row.articleCode || "").trim(),
+        quantity: Number(row.qtyOrder || 0),
         moldInDate: moldInStr,
         moldOutDate: moldOutStr,
         finishDate: finishStr,
         leanlineInDate: leanInStr,
-        cuttingDie: String(row["#LAST"] || "").trim(),
+        cuttingDie: String(row.last || "").trim(),
         status: "READY",
-        bom: String(row["BOM"] || "").trim(),
+        bom: String(row.bom || "").trim(),
         moldType: moldType,
-        rawStatus: String(row["Status"] || "").trim(),
-        sourceLine: String(row["LINE CODE"] || "").trim().toUpperCase(),
+        rawStatus: String(row.status || "").trim(),
+        sourceLine: String(row.lineCode || "").trim().toUpperCase(),
         codeLogo1: codeLogo1,
         receivedLogo: receivedLogo,
-        thangHoa: String(row["THĂNG HOA"] || "").trim(),
+        thangHoa: String(row.subIFM || "").trim(),
         logoStatus: logoStatus,
         productType: moldTypeMap.get(moldType) || null,
-        descriptionPU1: String(row["Description PU1"] || "").trim(),
-        descriptionFB: String(row["Description FB"] || "").trim()
+        descriptionPU1: String(row.descriptionPU1 || "").trim(),
+        descriptionFB: String(row.descriptionFB || "").trim()
       };
     }).filter((item: any) => item.id !== "");
 

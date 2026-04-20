@@ -219,7 +219,13 @@ export function autoSuggest(
           // Ràng buộc vật lý cứng
           if (thangHoa === 'CÓ') {
             const lineRulesForThangHoa = lineRulesForThisLine.filter(r => r.ruleType === 'THANG_HOA');
-            if (!lineRulesForThangHoa.some(r => r.ruleValue.toUpperCase() === 'CÓ') && l.lineCode !== 'H1') return false; 
+            const hasThangHoaRule = lineRulesForThangHoa.some(r => r.ruleValue.toUpperCase() === 'CÓ');
+            const hasNoThangHoaRule = lineRulesForThangHoa.some(r => r.ruleValue.toUpperCase() === 'KHÔNG');
+
+            // Nếu đơn có thăng hoa, ưu tiên các chuyền có rule THĂNG HOA = CÓ
+            // Nếu chuyền có rule THĂNG HOA = KHÔNG (Strict), loại bỏ
+            if (hasNoThangHoaRule) return false;
+            if (!hasThangHoaRule && l.lineCode !== 'H1') return false; 
           }
           if (l.lineCode === 'M5' && m5RuleIsStrict && productType !== '1K3S') return false;
           
@@ -237,12 +243,16 @@ export function autoSuggest(
           return true;
       });
 
-      // Nếu candidates trống, nới lỏng nhưng vẫn giữ Thăng Hoa/M5
       if (candidates.length === 0) {
           candidates = lines.filter(l => {
-              if (thangHoa === 'CÓ' && l.lineCode !== 'H1') {
-                const lineRulesForThangHoa = rulesByLine[l.id]?.filter(r => r.ruleType === 'THANG_HOA') || [];
-                if (!lineRulesForThangHoa.some(r => r.ruleValue.toUpperCase() === 'CÓ')) return false;
+              if (thangHoa === 'CÓ') {
+                const lineRulesForThisLine = rulesByLine[l.id] || [];
+                const lineRulesForThangHoa = lineRulesForThisLine.filter(r => r.ruleType === 'THANG_HOA');
+                const hasThangHoaRule = lineRulesForThangHoa.some(r => r.ruleValue.toUpperCase() === 'CÓ');
+                const hasNoThangHoaRule = lineRulesForThangHoa.some(r => r.ruleValue.toUpperCase() === 'KHÔNG');
+
+                if (hasNoThangHoaRule) return false;
+                if (!hasThangHoaRule && l.lineCode !== 'H1') return false;
               }
               if (l.lineCode === 'M5' && m5RuleIsStrict && productType !== '1K3S') return false;
               return true;
