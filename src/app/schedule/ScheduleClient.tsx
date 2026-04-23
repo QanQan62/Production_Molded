@@ -358,7 +358,9 @@ export default function ScheduleClient({
         });
 
         // Process sorted items
-        allItems.forEach((group: any) => {
+        allItems.forEach((group: any, idx: number) => {
+            const stt = idx + 1;
+            
             if (group.type === 'CONFIRMED') {
                 const j = group;
                 const isPriority = j.isPriority;
@@ -370,8 +372,10 @@ export default function ScheduleClient({
 
                 const manual = manualCombines.find(m => String(m.orderId).trim() === j.orderId);
                 const combineName = manual ? manual.combineName : "";
+                const finishDateFormatted = j.estimatedEndTime ? String(j.estimatedEndTime).split(' ')[0].split('T')[0] : "";
 
                 allExportData.push({
+                    "STT": stt,
                     "Line sắp vào": line.lineCode,
                     "Pro order": j.orderId,
                     "Nhóm Gộp (Combine)": combineName,
@@ -385,7 +389,7 @@ export default function ScheduleClient({
                     "PU description": j.descriptionPU1 || "",
                     "FB description": j.descriptionFB || "",
                     "code Logo1": j.codeLogo1 || "",
-                    "Finish date": j.estimatedEndTime || "",
+                    "Finish date": finishDateFormatted,
                     "Status": j.rawStatus || j.status || "",
                     "Note": note
                 });
@@ -408,8 +412,11 @@ export default function ScheduleClient({
                     } else if (g.items.length > 1 && !g.id.startsWith("EXCL_")) {
                         combineName = `#${g.bom}`;
                     }
+                    
+                    const finishDateFormatted = finishDate ? String(finishDate).split(' ')[0].split('T')[0] : "";
 
                     allExportData.push({
+                        "STT": stt,
                         "Line sắp vào": line.lineCode,
                         "Pro order": item.id,
                         "Nhóm Gộp (Combine)": combineName,
@@ -423,7 +430,7 @@ export default function ScheduleClient({
                         "PU description": item.descriptionPU1 || "",
                         "FB description": item.descriptionFB || "",
                         "code Logo1": item.codeLogo1 || "",
-                        "Finish date": item.finishDate || "",
+                        "Finish date": finishDateFormatted,
                         "Status": item.rawStatus || "",
                         "Note": note
                     });
