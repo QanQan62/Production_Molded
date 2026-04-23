@@ -1,0 +1,1 @@
+{"requests": [{"type": "execute", "stmt": {"sql": "SELECT id, thang_hoa FROM orders WHERE thang_hoa != '' LIMIT 10"}}]}

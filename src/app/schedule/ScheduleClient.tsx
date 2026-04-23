@@ -75,20 +75,26 @@ export default function ScheduleClient({
   const [activeTab, setActiveTab] = useState<'SCHEDULE' | 'CONFIG'>('SCHEDULE'); 
   const [activeLineId, setActiveLineId] = useState(data[0]?.id);
   const [mounted, setMounted] = useState(false);
-  const [combineMode, setCombineMode] = useState<'AUTO' | 'MANUAL'>('AUTO');
+  const [combineMode, setCombineMode] = useState<'AUTO' | 'MANUAL' | 'SEMI_AUTO'>('AUTO');
+  const [excludedMolds, setExcludedMolds] = useState<string[]>([]);
+  const [pendingMold, setPendingMold] = useState<string>('');
 
   const [overflowEnabled, setOverflowEnabled] = useState(true);
 
   useEffect(() => {
     setMounted(true);
     const saved = localStorage.getItem('combineMode');
-    if (saved === 'MANUAL' || saved === 'AUTO') {
-        setCombineMode(saved);
+    if (saved === 'MANUAL' || saved === 'AUTO' || saved === 'SEMI_AUTO') {
+        setCombineMode(saved as 'AUTO' | 'MANUAL' | 'SEMI_AUTO');
     }
     const savedOverflow = localStorage.getItem('overflowEnabled');
     if (savedOverflow !== null) {
         setOverflowEnabled(savedOverflow !== 'false');
     }
+    try {
+        const savedExcluded = localStorage.getItem('excludedMolds');
+        if (savedExcluded) setExcludedMolds(JSON.parse(savedExcluded));
+    } catch {}
   }, []);
 
   useEffect(() => {
@@ -96,6 +102,12 @@ export default function ScheduleClient({
         localStorage.setItem('combineMode', combineMode);
     }
   }, [combineMode, mounted]);
+
+  useEffect(() => {
+    if (mounted) {
+        localStorage.setItem('excludedMolds', JSON.stringify(excludedMolds));
+    }
+  }, [excludedMolds, mounted]);
 
   useEffect(() => {
     if (mounted) {
@@ -108,7 +120,7 @@ export default function ScheduleClient({
     // During SSR or before mounting, use server-provided 'data' to ensure match
     if (!mounted) return data; 
 
-    const groups = groupBOMs(rawData, manualCombines, combineMode);
+    const groups = groupBOMs(rawData, manualCombines, combineMode, excludedMolds);
     const suggestions = autoSuggest(groups, allLines, moldTargets, lineRules, overflowEnabled);
 
     const linesProcessed = allLines.map(line => {
@@ -146,7 +158,7 @@ export default function ScheduleClient({
             predicted: unassignedGroups
         }
     ];
-  }, [rawData, manualCombines, combineMode, allLines, moldTargets, lineRules, data, mounted, overflowEnabled]);
+  }, [rawData, manualCombines, combineMode, excludedMolds, allLines, moldTargets, lineRules, data, mounted, overflowEnabled]);
 
   const [filters, setFilters] = useState({
     urgent: false,
@@ -439,6 +451,12 @@ export default function ScheduleClient({
             >
                 Manual (Mode 2)
             </button>
+            <button 
+                onClick={() => setCombineMode('SEMI_AUTO')}
+                className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${combineMode === 'SEMI_AUTO' ? 'bg-white text-violet-600 shadow-sm' : 'text-slate-400'}`}
+            >
+                Semi-Auto (Mode 3)
+            </button>
           </div>
           <button 
                 onClick={() => setActiveTab(activeTab === 'SCHEDULE' ? 'CONFIG' : 'SCHEDULE')}
@@ -719,7 +737,8 @@ export default function ScheduleClient({
       )}
 
       {activeTab === 'CONFIG' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className={`grid gap-8 ${combineMode === 'SEMI_AUTO' ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1 md:grid-cols-2'}`}>
+            {/* Panel 1: Upload Manual Combine */}
             <div className="bg-white p-10 rounded-[3rem] shadow-xl border border-slate-200">
                 <div className="flex items-center gap-4 mb-8">
                     <div className="p-3 bg-indigo-100 text-indigo-600 rounded-2xl">
@@ -757,6 +776,101 @@ export default function ScheduleClient({
                     {loading && <div className="text-[10px] font-black text-indigo-600 animate-pulse">ĐANG XỬ LÝ DỮ LIỆU...</div>}
                 </div>
             </div>
+
+            {/* Panel 2: Excluded Molds for Mode 3 (SEMI_AUTO only) */}
+            {combineMode === 'SEMI_AUTO' && (() => {
+                // Collect all unique molds from rawData + knownMolds
+                const allAvailableMolds = Array.from(new Set([
+                    ...knownMolds,
+                    ...rawData.map((o: any) => (o.moldType || "").trim()).filter(Boolean)
+                ])).sort();
+
+                return (
+                    <div className="bg-white p-10 rounded-[3rem] shadow-xl border-2 border-violet-200">
+                        <div className="flex items-center gap-4 mb-3">
+                            <div className="p-3 bg-violet-100 text-violet-600 rounded-2xl">
+                                <GitMerge className="w-6 h-6" />
+                            </div>
+                            <div>
+                                <h3 className="text-xl font-black uppercase tracking-tighter text-violet-900">Mã Khuôn Không Gộp Auto</h3>
+                                <p className="text-[10px] font-black text-violet-400 uppercase tracking-widest mt-0.5">Semi-Auto Mode 3</p>
+                            </div>
+                        </div>
+                        <p className="text-xs text-slate-500 mb-6 leading-relaxed font-bold">
+                            Chọn các mã khuôn cần giữ <span className="text-violet-700 font-black">đứng đơn lẻ</span> (không tự động gộp).<br/>
+                            Các mã khuôn còn lại vẫn được auto combine theo quy tắc bình thường.
+                        </p>
+
+                        {/* Picker row */}
+                        <div className="flex gap-2 mb-6">
+                            <select
+                                value={pendingMold}
+                                onChange={e => setPendingMold(e.target.value)}
+                                className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold focus:border-violet-400 focus:outline-none transition-all"
+                            >
+                                <option value="">— Chọn mã khuôn —</option>
+                                {allAvailableMolds
+                                    .filter(m => !excludedMolds.includes(m))
+                                    .map(m => (
+                                        <option key={m} value={m}>{m}</option>
+                                    ))
+                                }
+                            </select>
+                            <button
+                                disabled={!pendingMold}
+                                onClick={() => {
+                                    if (pendingMold && !excludedMolds.includes(pendingMold)) {
+                                        setExcludedMolds(prev => [...prev, pendingMold]);
+                                        setPendingMold('');
+                                    }
+                                }}
+                                className="px-6 py-3 bg-violet-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-violet-700 transition-all disabled:opacity-30 disabled:cursor-not-allowed shadow-lg shadow-violet-100 whitespace-nowrap"
+                            >
+                                + Thêm
+                            </button>
+                        </div>
+
+                        {/* Selected molds list */}
+                        {excludedMolds.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-10 border-2 border-dashed border-violet-100 rounded-3xl text-center">
+                                <div className="p-3 bg-violet-50 rounded-2xl mb-3">
+                                    <GitMerge className="w-6 h-6 text-violet-300" />
+                                </div>
+                                <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Chưa có mã khuôn nào bị loại</p>
+                                <p className="text-[10px] text-slate-300 mt-1">Thêm mã khuôn ở trên để bắt đầu</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-2">
+                                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">
+                                    {excludedMolds.length} mã khuôn sẽ đứng đơn lẻ
+                                </div>
+                                {excludedMolds.map(mold => (
+                                    <div key={mold} className="flex items-center justify-between px-5 py-3 bg-violet-50 border border-violet-100 rounded-2xl group hover:border-violet-300 transition-all">
+                                        <div className="flex items-center gap-3">
+                                            <span className="w-2 h-2 rounded-full bg-violet-500 flex-shrink-0"></span>
+                                            <span className="font-black text-sm text-violet-900 tracking-tight">{mold}</span>
+                                            <span className="text-[8px] font-black px-2 py-0.5 bg-violet-200 text-violet-700 rounded-full uppercase">Đơn lẻ</span>
+                                        </div>
+                                        <button
+                                            onClick={() => setExcludedMolds(prev => prev.filter(m => m !== mold))}
+                                            className="text-slate-300 hover:text-rose-500 transition-colors font-black text-xs opacity-0 group-hover:opacity-100"
+                                            title="Xóa"
+                                        >
+                                            ✕
+                                        </button>
+                                    </div>
+                                ))}
+                                <button
+                                    onClick={() => setExcludedMolds([])}
+                                    className="w-full mt-4 py-2 text-[10px] font-black uppercase tracking-widest text-rose-400 hover:text-rose-600 transition-colors"
+                                >
+                                    Xóa tất cả
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                );
+            })()}
         </div>
       )}
     </div>

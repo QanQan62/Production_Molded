@@ -35,7 +35,12 @@ function parseExcelDate(dateStr: any) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-export function groupBOMs(allOrders: Order[], manualCombines: { orderId: string, combineName: string }[] = [], mode: 'AUTO' | 'MANUAL' = 'AUTO') {
+export function groupBOMs(
+    allOrders: Order[],
+    manualCombines: { orderId: string, combineName: string }[] = [],
+    mode: 'AUTO' | 'MANUAL' | 'SEMI_AUTO' = 'AUTO',
+    excludedMolds: string[] = []
+) {
     const manualMap = new Map(manualCombines.map(c => [String(c.orderId).trim(), String(c.combineName).trim()]));
     
     // --- STEP 1: Process Manual Groups ---
@@ -59,24 +64,11 @@ export function groupBOMs(allOrders: Order[], manualCombines: { orderId: string,
         isManual: true
     }));
 
-    if (mode === 'MANUAL') {
-        // In strictly manual mode, remaining ones are standalone
-        const standaloneResult = remainingOrders.map(o => ({ 
-            ...createGroupMetaData([o]), 
-            id: `SOLE_${o.id}` 
-        }));
-        return [...manualResult, ...standaloneResult].sort((a, b) => a.minFinishDate - b.minFinishDate);
-    }
-
-    // --- STEP 2: Process Auto Groups for the rest ---
-    const moldingOutOrders = remainingOrders.filter(o => o.moldOutDate && o.bom);
-    const moldingInOrders = remainingOrders.filter(o => !o.moldOutDate && o.moldInDate && o.bom);
-    const others = remainingOrders.filter(o => !o.bom || (!o.moldOutDate && !o.moldInDate));
-
+    // Define applyStandardRule early so it can be used by both SEMI_AUTO and AUTO paths
     const applyStandardRule = (list: Order[]) => {
         const byKey: Record<string, Order[]> = {};
         list.forEach(o => {
-            const key = `${o.bom}_${o.logoStatus || 'NO'}`;
+            const key = `${o.bom}_${(o.articleCode || '').toUpperCase().trim()}_${o.logoStatus || 'NO'}`;
             if (!byKey[key]) byKey[key] = [];
             byKey[key].push(o);
         });
@@ -101,6 +93,58 @@ export function groupBOMs(allOrders: Order[], manualCombines: { orderId: string,
         });
         return final;
     };
+
+    if (mode === 'MANUAL') {
+        // In strictly manual mode, remaining ones are standalone
+        const standaloneResult = remainingOrders.map(o => ({ 
+            ...createGroupMetaData([o]), 
+            id: `SOLE_${o.id}` 
+        }));
+        return [...manualResult, ...standaloneResult].sort((a, b) => a.minFinishDate - b.minFinishDate);
+    }
+
+    if (mode === 'SEMI_AUTO') {
+        // In semi-auto mode: orders whose moldType is in excludedMolds → standalone (no auto combine)
+        // All other orders → auto combine as usual
+        const normalizedExcluded = excludedMolds.map(m => m.toUpperCase().trim());
+        const excludedOrders = remainingOrders.filter(o =>
+            normalizedExcluded.includes((o.moldType || "").toUpperCase().trim())
+        );
+        const includedOrders = remainingOrders.filter(o =>
+            !normalizedExcluded.includes((o.moldType || "").toUpperCase().trim())
+        );
+
+        const excludedStandalone = excludedOrders.map(o => ({
+            ...createGroupMetaData([o]),
+            id: `EXCL_${o.id}`
+        }));
+
+        const moldingOutIncluded = includedOrders.filter(o => o.moldOutDate && o.bom);
+        const moldingInIncluded = includedOrders.filter(o => !o.moldOutDate && o.moldInDate && o.bom);
+        const othersIncluded = includedOrders.filter(o => !o.bom || (!o.moldOutDate && !o.moldInDate));
+
+        const semiAutoResults = [
+            ...applyStandardRule(moldingOutIncluded),
+            ...applyStandardRule(moldingInIncluded)
+        ];
+        const othersSemiResult = othersIncluded.map(o => ({ ...createGroupMetaData([o]), id: `OTHER_${o.id}` }));
+
+        return [
+            ...manualResult,
+            ...excludedStandalone,
+            ...semiAutoResults,
+            ...othersSemiResult
+        ].sort((a, b) => {
+            if (a.isPriority && !b.isPriority) return -1;
+            if (!a.isPriority && b.isPriority) return 1;
+            return a.minFinishDate - b.minFinishDate;
+        });
+    }
+
+    // --- STEP 2: Process Auto Groups for the rest ---
+    const moldingOutOrders = remainingOrders.filter(o => o.moldOutDate && o.bom);
+    const moldingInOrders = remainingOrders.filter(o => !o.moldOutDate && o.moldInDate && o.bom);
+    const others = remainingOrders.filter(o => !o.bom || (!o.moldOutDate && !o.moldInDate));
 
     const autoResults = [...applyStandardRule(moldingOutOrders), ...applyStandardRule(moldingInOrders)];
     const otherResults = others.map(o => ({ ...createGroupMetaData([o]), id: `OTHER_${o.id}` }));

@@ -1,0 +1,4 @@
+{"requests": [
+  {"type": "execute", "stmt": {"sql": "SELECT * FROM lines WHERE line_code = 'H1'"}},
+  {"type": "execute", "stmt": {"sql": "SELECT * FROM line_rules WHERE line_id = (SELECT id FROM lines WHERE line_code = 'H1')"}}
+]}
