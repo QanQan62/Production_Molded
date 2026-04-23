@@ -322,70 +322,113 @@ export default function ScheduleClient({
     const today = new Date().toISOString().split('T')[0];
 
     clientData.forEach((line: any) => {
-        // Confirmed jobs - each is an individual order
-        line.confirmed.forEach((j: any) => {
-            const isPriority = j.isPriority;
-            const isDelayed = j.estimatedEndTime && j.estimatedEndTime < today;
-            let note = "Bình thường";
-            if (isPriority) note = "GẤP";
-            else if (isDelayed) note = "Trễ";
-            else if (j.logoStatus === "Chưa có Logo") note = "Chưa có Logo";
+        // Gather all groups for this line
+        let allItems = [
+            ...line.confirmed.map((j: any) => ({ ...j, type: 'CONFIRMED' as const })),
+            ...line.predicted.map((p: any) => ({ ...p, type: 'PREDICTED' as const }))
+        ];
 
-            const manual = manualCombines.find(m => String(m.orderId).trim() === j.orderId);
+        // Apply UI sort logic
+        allItems.sort((a, b) => {
+            const getPriority = (item: any) => {
+                const fd = item.type === 'CONFIRMED' 
+                    ? getLocalDate(item.estimatedEndTime)
+                    : getLocalDate(item.minFinishDate);
 
-            allExportData.push({
-                "Line sắp vào": line.lineCode,
-                "Pro order": j.orderId,
-                "Nhóm Gộp (Combine)": manual ? manual.combineName : "",
-                "brand": j.brand || "",
-                "article": j.articleCode || "",
-                "Qty": j.qty,
-                "BOM": j.bom,
-                "Moldtype": j.moldType,
-                "ProductType": j.productType || "",
-                "#Last": j.cuttingDie || "",
-                "PU description": j.descriptionPU1 || "",
-                "FB description": j.descriptionFB || "",
-                "code Logo1": j.codeLogo1 || "",
-                "Finish date": j.estimatedEndTime || "",
-                "Status": j.rawStatus || j.status || "",
-                "Note": note
-            });
+                if (item.isPriority) return 1;
+                if (fd && fd <= today) return 2;
+                
+                const isUrgent5 = checkIsUrgent5(item);
+                const isReadyLogo = item.logoStatus === 'Có Logo' || item.logoStatus === 'Không in';
+
+                if ((item.rawStatus?.includes('5.1') || isUrgent5) && isReadyLogo) return 3;
+                if (item.rawStatus?.startsWith('5.') || item.logoStatus === 'Chưa có Logo') return 4;
+                return 5;
+            };
+
+            const pA = getPriority(a);
+            const pB = getPriority(b);
+            if (pA !== pB) return pA - pB;
+
+            const dateA = a.type === 'CONFIRMED' ? a.estimatedEndTime : a.minFinishDate;
+            const dateB = b.type === 'CONFIRMED' ? b.estimatedEndTime : b.minFinishDate;
+            if (dateA < dateB) return -1;
+            if (dateA > dateB) return 1;
+            return 0;
         });
 
-        // Predicted groups - expand each group into individual orders
-        line.predicted.forEach((g: any) => {
-            if (!g.items) return;
-            g.items.forEach((item: any) => {
-                const isPriority = item.isPriority;
-                const finishDate = item.finishDate || "";
-                const isDelayed = finishDate && finishDate < today;
+        // Process sorted items
+        allItems.forEach((group: any) => {
+            if (group.type === 'CONFIRMED') {
+                const j = group;
+                const isPriority = j.isPriority;
+                const isDelayed = j.estimatedEndTime && j.estimatedEndTime < today;
                 let note = "Bình thường";
                 if (isPriority) note = "GẤP";
                 else if (isDelayed) note = "Trễ";
-                else if (item.logoStatus === "Chưa có Logo") note = "Chưa có Logo";
+                else if (j.logoStatus === "Chưa có Logo") note = "Chưa có Logo";
 
-                const manual = manualCombines.find(m => String(m.orderId).trim() === item.id);
+                const manual = manualCombines.find(m => String(m.orderId).trim() === j.orderId);
+                const combineName = manual ? manual.combineName : "";
 
                 allExportData.push({
                     "Line sắp vào": line.lineCode,
-                    "Pro order": item.id,
-                    "Nhóm Gộp (Combine)": manual ? manual.combineName : "",
-                    "brand": item.brand || "",
-                    "article": item.articleCode || "",
-                    "Qty": item.quantity,
-                    "BOM": item.bom || g.bom,
-                    "Moldtype": item.moldType || g.moldType,
-                    "ProductType": item.productType || "",
-                    "#Last": item.cuttingDie || "",
-                    "PU description": item.descriptionPU1 || "",
-                    "FB description": item.descriptionFB || "",
-                    "code Logo1": item.codeLogo1 || "",
-                    "Finish date": item.finishDate || "",
-                    "Status": item.rawStatus || "",
+                    "Pro order": j.orderId,
+                    "Nhóm Gộp (Combine)": combineName,
+                    "brand": j.brand || "",
+                    "article": j.articleCode || "",
+                    "Qty": j.qty,
+                    "BOM": j.bom,
+                    "Moldtype": j.moldType,
+                    "ProductType": j.productType || "",
+                    "#Last": j.cuttingDie || "",
+                    "PU description": j.descriptionPU1 || "",
+                    "FB description": j.descriptionFB || "",
+                    "code Logo1": j.codeLogo1 || "",
+                    "Finish date": j.estimatedEndTime || "",
+                    "Status": j.rawStatus || j.status || "",
                     "Note": note
                 });
-            });
+            } else {
+                const g = group;
+                if (!g.items) return;
+                g.items.forEach((item: any) => {
+                    const isPriority = item.isPriority;
+                    const finishDate = item.finishDate || "";
+                    const isDelayed = finishDate && finishDate < today;
+                    let note = "Bình thường";
+                    if (isPriority) note = "GẤP";
+                    else if (isDelayed) note = "Trễ";
+                    else if (item.logoStatus === "Chưa có Logo") note = "Chưa có Logo";
+
+                    const manual = manualCombines.find(m => String(m.orderId).trim() === item.id);
+                    let combineName = "";
+                    if (manual) {
+                        combineName = manual.combineName;
+                    } else if (g.items.length > 1 && !g.id.startsWith("EXCL_")) {
+                        combineName = `#${g.bom}`;
+                    }
+
+                    allExportData.push({
+                        "Line sắp vào": line.lineCode,
+                        "Pro order": item.id,
+                        "Nhóm Gộp (Combine)": combineName,
+                        "brand": item.brand || "",
+                        "article": item.articleCode || "",
+                        "Qty": item.quantity,
+                        "BOM": item.bom || g.bom,
+                        "Moldtype": item.moldType || g.moldType,
+                        "ProductType": item.productType || "",
+                        "#Last": item.cuttingDie || "",
+                        "PU description": item.descriptionPU1 || "",
+                        "FB description": item.descriptionFB || "",
+                        "code Logo1": item.codeLogo1 || "",
+                        "Finish date": item.finishDate || "",
+                        "Status": item.rawStatus || "",
+                        "Note": note
+                    });
+                });
+            }
         });
     });
 
