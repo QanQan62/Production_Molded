@@ -1,3 +1,4 @@
+// Trigger deploy: Semi-Auto Mode 3 implementation
 import { orders } from "@/db/schema";
 
 type Order = typeof orders.$inferSelect;
